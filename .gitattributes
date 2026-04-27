@@ -4,3 +4,9 @@ GRAM[[:space:]]Suite[[:space:]]2.0/**/*.exe filter=lfs diff=lfs merge=lfs -text
 GRAM[[:space:]]Suite[[:space:]]2.0/**/*.dll filter=lfs diff=lfs merge=lfs -text
 GRAM[[:space:]]Suite[[:space:]]2.0/**/*.so filter=lfs diff=lfs merge=lfs -text
 GRAM[[:space:]]Suite[[:space:]]2.0/**/*.dylib filter=lfs diff=lfs merge=lfs -text
+GRAM[[:space:]]Suite[[:space:]]2.0/**/*.bsp filter=lfs diff=lfs merge=lfs -text
+GRAM[[:space:]]Suite[[:space:]]2.0/**/*.bpc filter=lfs diff=lfs merge=lfs -text
+GRAM[[:space:]]Suite[[:space:]]2.0/**/*.tpc filter=lfs diff=lfs merge=lfs -text
+GRAM[[:space:]]Suite[[:space:]]2.0/**/*.tls filter=lfs diff=lfs merge=lfs -text
+GRAM[[:space:]]Suite[[:space:]]2.0/**/*.tf  filter=lfs diff=lfs merge=lfs -text
+GRAM[[:space:]]Suite[[:space:]]2.0/**/*.zip filter=lfs diff=lfs merge=lfs -text
