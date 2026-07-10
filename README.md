@@ -144,6 +144,31 @@ Runtime behaviour is controlled through environment variables:
 
 The GRAM Suite ships with a starter pack of NAIF SPICE kernels covering dates from 2000-01-01 to 2100-01-01. If your mission requires a different date range or higher-precision ephemeris data, download the appropriate kernels from the [NAIF website](https://naif.jpl.nasa.gov/naif/data.html) and point GRAM to them via its SPICE configuration.
 
+## Height and latitude conventions
+
+The wrapper's `density_state` path accepts SI inputs — height in meters, latitude and
+longitude in radians — and converts them once at the native boundary (km / degrees).
+The conventions those inputs are interpreted under matter at the kilometer level:
+
+- **Latitude/height pair**: callers supply Bowring **planetodetic** latitude with
+  **geodetic height above the reference ellipsoid** (what SpaceAGORA's `rtolatlong`
+  produces). The wrapper passes `is_planetocentric=false`, so native GRAM converts
+  the pair to planetocentric internally (`Position::convertToPlanetocentric`).
+  Labeling geodetic inputs planetocentric mis-references the height by the local
+  ellipsoid geometry — up to ~2 km at Mars polar latitudes, which is a ~25% density
+  error at aerobraking heights (density scale height ~7 km).
+- **Mars height reference**: native MarsGRAM defaults to `isMolaHeights=true`
+  (heights above the MOLA areoid, planetocentric inputs required). The wrapper
+  defaults this to **false** so heights are referenced to the ellipsoid, matching
+  the geodetic inputs above. Opting back in via `mars_mola_heights=true` requires
+  planetocentric positions and is therefore incompatible with the wrapper's
+  `density_state` inputs — native GRAM raises an error at the first query.
+- **Sanity check**: native GRAM echoes the resolved radius via `get_position`
+  (`totalRadius`); with the defaults above a known planetocentric radius round-trips
+  to sub-meter accuracy. Passing radius-based altitudes (`r − R_equatorial`) as the
+  height is wrong under *either* setting — at 80° latitude it lands ~17.5 km below
+  the intended point (~14× density).
+
 ## License
 
 This wrapper is released under the MIT License. NASA GRAM Suite 2.0 is subject to its own export-controlled distribution terms; refer to the documentation included with your GRAM distribution.

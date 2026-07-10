@@ -548,8 +548,18 @@ function GRAMAtmosphereModel(;
                 boundary_layer_winds=Float64(mars_wind_scales[2])
             )
         end
-        if mars_mola_heights !== nothing && isdefined(gram, :set_mola_heights!)
-            gram.set_mola_heights!(gram_atmosphere, mars_mola_heights)
+        # Height reference: native MarsGRAM defaults to isMolaHeights=true, i.e.
+        # input heights measured above the MOLA areoid at planetocentric latitude.
+        # Callers of this wrapper (SpaceAGORA) supply Bowring geodetic altitudes
+        # above the IAU reference ellipsoid; reading those as areoid heights is a
+        # ~0-2 km reference-surface error (largest at polar latitudes), worth
+        # ~25% density at aerobraking heights. Default to ellipsoid-referenced
+        # heights unless the caller explicitly opts into MOLA. NOTE: MOLA heights
+        # require planetocentric inputs (native GRAM throws otherwise), so an
+        # explicit mars_mola_heights=true is incompatible with the planetodetic
+        # position inputs used by density_state and will error at first query.
+        if isdefined(gram, :set_mola_heights!)
+            gram.set_mola_heights!(gram_atmosphere, mars_mola_heights === nothing ? false : mars_mola_heights)
         end
         if mars_min_max !== nothing && isdefined(gram, :set_min_max!)
             gram.set_min_max!(gram_atmosphere, Int(mars_min_max))
@@ -916,13 +926,20 @@ function _gram_density_state_native(
     wind::Bool
 )::Tuple{Float64, Float64, SVector{3, Float64}}
     set_position! = Base.invokelatest(getfield, model.gram, Symbol("set_position!"))
+    # The (latitude, height) pair supplied by callers is Bowring PLANETODETIC
+    # latitude with GEODETIC height above the reference ellipsoid; native GRAM
+    # converts the pair to planetocentric internally when is_planetocentric=false
+    # (common/Position::convertToPlanetocentric). Labeling it planetocentric —
+    # the wrapper's old behavior — mis-references the height by the local
+    # areoid/ellipsoid geometry (up to ~2 km at Mars polar latitudes).
     Base.invokelatest(
         set_position!,
         model.gram_atmosphere;
         height=h * 1e-3,
         latitude=rad2deg(lat),
         longitude=rad2deg(lon),
-        elapsed_time=el_time
+        elapsed_time=el_time,
+        is_planetocentric=false
     )
 
     update! = Base.invokelatest(getfield, model.gram, Symbol("update!"))
