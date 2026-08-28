@@ -94,6 +94,21 @@ const _GRAM_OFFLINE_SURROGATE_WARNED = Dict{String, Bool}()
 const _GRAM_OFFLINE_SURROGATE_WARNED_LOCK = ReentrantLock()
 const _GRAM_INTERNAL_LOCK = ReentrantLock()
 
+# Standalone default lock for `_with_gram_lock`'s `lock_obj === nothing` path
+# (used for model construction, where no model instance exists yet to scope a
+# per-instance lock to). GRAMSuite has no hard dependency on SpaceAGORA, so it
+# cannot reference SpaceAGORA.RuntimeServices.GRAM_LOCK directly; this hook
+# lets a host package (SpaceAGORAGRAMSuiteExt) inject its own process-wide
+# lock here instead, the same pattern already used by
+# `_GRAM_EPHEMERIS_STATE_FN` below. This matters because `libGRAM.dylib`'s
+# statically-linked CSPICE is not actually isolated from a host's own CSPICE
+# bindings at the OS symbol-resolution level (both export identical internal
+# symbol names, e.g. `chkin_`/`chkout_`/`trcpkg_`) -- so GRAM construction
+# must serialize against the host's own CSPICE-touching calls, not just
+# against other GRAM construction calls.
+const _GRAM_DEFAULT_LOCK_HOOK = Ref{Union{Nothing, ReentrantLock}}(nothing)
+@inline _gram_default_lock()::ReentrantLock = something(_GRAM_DEFAULT_LOCK_HOOK[], _GRAM_INTERNAL_LOCK)
+
 const _GRAM_SUPPORTED_PLANETS = ("earth", "mars", "venus", "titan", "jupiter", "uranus", "neptune")
 const _GRAM_PLANET_DIR_NAMES = Dict{String, String}(
     "earth" => "Earth",
@@ -121,6 +136,7 @@ const _GRAM_FROZEN_PLANET_ALT_RANGE_M = Dict{String, Tuple{Float64, Float64}}(
 @inline _package_root() = normpath(joinpath(@__DIR__, ".."))
 @inline _workspace_root() = normpath(joinpath(_package_root(), ".."))
 @inline _gram_lib_extension() = Sys.iswindows() ? "dll" : (Sys.isapple() ? "dylib" : "so")
+@inline _gram_build_lib_dir(gram_root::AbstractString) = joinpath(gram_root, "Build", "lib")
 
 function resolve_path(path::AbstractString)::String
     if isempty(path)
@@ -176,6 +192,112 @@ end
     return parsed
 end
 
+@inline function _gram_host_library_filename()::String
+    return "libGRAM.$(_gram_lib_extension())"
+end
+
+@inline function _gram_host_library_path(gram_root::AbstractString)::String
+    return joinpath(_gram_build_lib_dir(gram_root), _gram_host_library_filename())
+end
+
+@inline function _gram_host_compatible_library(path::AbstractString)::Bool
+    return endswith(lowercase(path), "." * lowercase(_gram_lib_extension()))
+end
+
+function _parse_simple_env_assignments(file::AbstractString)::Dict{String, String}
+    values = Dict{String, String}()
+    isfile(file) || return values
+    for raw_line in eachline(file)
+        line = strip(raw_line)
+        isempty(line) && continue
+        startswith(line, "#") && continue
+        startswith(line, "export ") && (line = strip(line[8:end]))
+        occursin("=", line) || continue
+        key, value = split(line, "="; limit=2)
+        key = strip(key)
+        value = strip(value)
+        if length(value) >= 2
+            if (startswith(value, "\"") && endswith(value, "\"")) ||
+               (startswith(value, "'") && endswith(value, "'"))
+                value = value[2:end-1]
+            end
+        end
+        values[key] = value
+    end
+    return values
+end
+
+function _gram_candidate_from_recorded_path(path::AbstractString, gram_root::AbstractString)::Union{Nothing, String}
+    isempty(path) && return nothing
+    for candidate in _resolve_path_candidates(path)
+        if _gram_host_compatible_library(candidate) && isfile(candidate)
+            return candidate
+        end
+    end
+    if isabspath(path)
+        local_candidate = joinpath(_gram_build_lib_dir(gram_root), basename(path))
+        if _gram_host_compatible_library(local_candidate) && isfile(local_candidate)
+            return normpath(local_candidate)
+        end
+    end
+    return nothing
+end
+
+function _gram_recorded_library_candidates(gram_root::AbstractString)::Vector{String}
+    recorded = String[]
+    env_file = joinpath(gram_root, "simulation", "GRAM", "gram.env")
+    manifest_file = joinpath(gram_root, "simulation", "GRAM", ".gram-build-manifest")
+    for file in (env_file, manifest_file)
+        values = _parse_simple_env_assignments(file)
+        lib = get(values, "GRAM_LIB", "")
+        isempty(lib) || push!(recorded, lib)
+    end
+    return unique(recorded)
+end
+
+function _gram_incompatible_library_candidates(gram_root::AbstractString)::Vector{String}
+    lib_dir = _gram_build_lib_dir(gram_root)
+    isdir(lib_dir) || return String[]
+    incompatible = String[]
+    for entry in readdir(lib_dir)
+        path = joinpath(lib_dir, entry)
+        isfile(path) || continue
+        startswith(entry, "libGRAM.") || continue
+        _gram_host_compatible_library(path) && continue
+        endswith(entry, ".a") && continue
+        push!(incompatible, path)
+    end
+    sort!(incompatible)
+    return incompatible
+end
+
+function _find_gram_library(gram_root::AbstractString)::Union{Nothing, String}
+    env_lib = strip(get(ENV, "GRAM_LIB", ""))
+    candidate = _gram_candidate_from_recorded_path(env_lib, gram_root)
+    candidate === nothing || return candidate
+
+    local_native = _gram_host_library_path(gram_root)
+    isfile(local_native) && return normpath(local_native)
+
+    for recorded in _gram_recorded_library_candidates(gram_root)
+        candidate = _gram_candidate_from_recorded_path(recorded, gram_root)
+        candidate === nothing || return candidate
+    end
+
+    return nothing
+end
+
+function _gram_missing_library_error(gram_root::AbstractString)
+    expected = _gram_host_library_path(gram_root)
+    message = "GRAM shared library not found for this host. Expected $(expected). " *
+              "Run `bash ./scripts/ensure_gram_native.sh` to build the native library."
+    incompatible = _gram_incompatible_library_candidates(gram_root)
+    if !isempty(incompatible)
+        message *= " Found incompatible GRAM shared libraries instead: " * join(incompatible, ", ")
+    end
+    return ErrorException(message)
+end
+
 @inline function gram_use_global_lock()::Bool
     mode = lowercase(strip(get(ENV, "SPACEAGORA_GRAM_GLOBAL_LOCK", "on")))
     if mode in ("on", "true", "1", "yes")
@@ -226,8 +348,25 @@ end
 @inline function _with_gram_lock(f::F, lock_obj) where {F}
     if gram_use_global_lock()
         if lock_obj === nothing
-            return lock(_GRAM_INTERNAL_LOCK) do
-                f()
+            # invokelatest, unlike the sampling branch below: this is the
+            # branch GRAMAtmosphereModel's constructor uses, and the FIRST
+            # construction on a process dynamically `Base.include`s the
+            # native GRAM wrapper module, defining new types/methods at a
+            # *later* world age than whatever frame called this constructor.
+            # A caller frame compiled before that dynamic load (e.g. a
+            # Distributed campaign closure dispatched to a fresh worker)
+            # would otherwise hit MethodError(..., world_age=...) on any of
+            # the constructor's own unwrapped gram.xxx(...) calls.
+            # invokelatest here makes every call inside f() -- however many
+            # gram.xxx(...) sites it contains -- see the current world age,
+            # without needing each one individually wrapped. Not applied to
+            # the lock_obj-provided (sampling) branch below: that's the hot
+            # per-step density-query path, and the dynamic load has already
+            # settled by the time any sampling call happens (construction
+            # always precedes sampling), so paying invokelatest's dynamic-
+            # dispatch cost there would be pure overhead.
+            return lock(_gram_default_lock()) do
+                Base.invokelatest(f)
             end
         end
         return lock(lock_obj) do
@@ -426,21 +565,147 @@ function GRAMAtmosphereModel(;
 )
     it = _coerce_initial_time(initial_time)
     planet_key = lowercase(strip(planet_name))
-
     gram_root = _resolve_gram_root(gram_root_directory, gram_directory)
-    gram, loaded_now = _load_gram_wrapper!(gram_root)
-    if loaded_now
-        return Base.invokelatest(
-            GRAMAtmosphereModel;
-            gram_directory=gram_directory,
-            gram_data_directory=gram_data_directory,
-            gram_root_directory=gram_root_directory,
-            gram_library_path=gram_library_path,
-            spice_directory=spice_directory,
-            planet_name=planet_name,
-            seed=seed,
-            initial_time=it,
-            gram_min_relative_step_size=gram_min_relative_step_size,
+
+    # Every native call below mutates GRAM's process-global state (dynamically
+    # `include`d wrapper module, CSPICE kernel pool, `gram_atmosphere` handle
+    # construction) and is not reentrant across concurrent tasks/threads.
+    # `_with_gram_lock` is the same lock used by every sampling call site
+    # (`_gram_density_state_native`); `ReentrantLock` permits the recursive
+    # `Base.invokelatest(GRAMAtmosphereModel; ...)` self-call below (taken on
+    # first-ever wrapper load) and the nested per-planet constructor calls
+    # inside `precompute_gram_static_grids!` to re-acquire it from the same
+    # task without deadlocking.
+    return _with_gram_lock(nothing) do
+        gram, loaded_now = _load_gram_wrapper!(gram_root)
+        if loaded_now
+            return Base.invokelatest(
+                GRAMAtmosphereModel;
+                gram_directory=gram_directory,
+                gram_data_directory=gram_data_directory,
+                gram_root_directory=gram_root_directory,
+                gram_library_path=gram_library_path,
+                spice_directory=spice_directory,
+                planet_name=planet_name,
+                seed=seed,
+                initial_time=it,
+                gram_min_relative_step_size=gram_min_relative_step_size,
+                gram_perturbation_scales=gram_perturbation_scales,
+                mars_map_year=mars_map_year,
+                mars_mgcm_dust_levels=mars_mgcm_dust_levels,
+                mars_dust_storm=mars_dust_storm,
+                mars_f107=mars_f107,
+                mars_wind_scales=mars_wind_scales,
+                mars_mola_heights=mars_mola_heights,
+                mars_min_max=mars_min_max
+            )
+        end
+
+        if !isempty(gram_library_path)
+            gram.set_library!(resolve_path(gram_library_path))
+        else
+            local_lib = _find_gram_library(gram_root)
+            local_lib === nothing && throw(_gram_missing_library_error(gram_root))
+            gram.set_library!(local_lib)
+        end
+
+        spice_root = _resolve_spice_directory(gram_root, spice_directory, gram_data_directory)
+        gram.initialize!(spice_root)
+
+        gram_data_root = _resolve_gram_data_root(gram_root, gram_data_directory)
+        body = _gram_body(gram, planet_key)
+        data_path = _gram_data_path(gram_data_root, planet_key)
+        gram_atmosphere = data_path === nothing ? gram.create_atmosphere(body) : gram.create_atmosphere(body; data_path=data_path)
+
+        gram.set_start_time!(
+            gram_atmosphere;
+            year=Int(it.year),
+            month=Int(it.month),
+            day=Int(it.day),
+            hour=Int(it.hour),
+            minute=Int(it.minute),
+            seconds=Float64(it.second),
+            scale=1,
+            frame=1
+        )
+
+        if isdefined(gram, :set_seed!)
+            gram.set_seed!(gram_atmosphere, seed)
+        elseif seed != 1001 && !_GRAM_SEED_WARNING_EMITTED[]
+            _GRAM_SEED_WARNING_EMITTED[] = true
+            @warn "GRAMAtmosphereModel seed is ignored by the current Julia GRAM wrapper."
+        end
+
+        if gram_min_relative_step_size !== nothing && isdefined(gram, :set_min_relative_step_size!)
+            gram.set_min_relative_step_size!(gram_atmosphere, Float64(gram_min_relative_step_size))
+        end
+
+        if gram_perturbation_scales !== nothing && isdefined(gram, :set_perturbation_scales!)
+            if gram_perturbation_scales isa Real
+                scale = Float64(gram_perturbation_scales)
+                gram.set_perturbation_scales!(
+                    gram_atmosphere;
+                    density_scale=scale,
+                    ew_wind_scale=scale,
+                    ns_wind_scale=scale,
+                    vertical_wind_scale=scale
+                )
+            else
+                s = gram_perturbation_scales
+                gram.set_perturbation_scales!(
+                    gram_atmosphere;
+                    density_scale=Float64(s[1]),
+                    ew_wind_scale=Float64(s[2]),
+                    ns_wind_scale=Float64(s[3]),
+                    vertical_wind_scale=Float64(s[4])
+                )
+            end
+        end
+
+        if planet_key == "mars"
+            if mars_map_year !== nothing && isdefined(gram, :set_map_year!)
+                gram.set_map_year!(gram_atmosphere, Int(mars_map_year))
+            end
+            if mars_mgcm_dust_levels !== nothing && isdefined(gram, :set_mgcm_dust_levels!)
+                gram.set_mgcm_dust_levels!(
+                    gram_atmosphere;
+                    constant_level=Float64(mars_mgcm_dust_levels[1]),
+                    min_level=Float64(mars_mgcm_dust_levels[2]),
+                    max_level=Float64(mars_mgcm_dust_levels[3])
+                )
+            end
+            if mars_dust_storm !== nothing && isdefined(gram, :set_dust_storm!)
+                ds = mars_dust_storm
+                gram.set_dust_storm!(
+                    gram_atmosphere;
+                    longitude_sun=Float64(ds[1]),
+                    duration=Float64(ds[2]),
+                    intensity=Float64(ds[3]),
+                    max_radius=Float64(ds[4]),
+                    latitude=Float64(ds[5]),
+                    longitude=Float64(ds[6])
+                )
+            end
+            if mars_f107 !== nothing && isdefined(gram, :set_f107!)
+                gram.set_f107!(gram_atmosphere, Float64(mars_f107))
+            end
+            if mars_wind_scales !== nothing && isdefined(gram, :set_wind_scales!)
+                gram.set_wind_scales!(
+                    gram_atmosphere;
+                    mean_winds=Float64(mars_wind_scales[1]),
+                    boundary_layer_winds=Float64(mars_wind_scales[2])
+                )
+            end
+            if mars_mola_heights !== nothing && isdefined(gram, :set_mola_heights!)
+                gram.set_mola_heights!(gram_atmosphere, mars_mola_heights)
+            end
+            if mars_min_max !== nothing && isdefined(gram, :set_min_max!)
+                gram.set_min_max!(gram_atmosphere, Int(mars_min_max))
+            end
+        end
+
+        offline_surrogate_supported, offline_surrogate_unsupported_reason = _gram_offline_surrogate_features_supported(
+            planet_key;
             gram_perturbation_scales=gram_perturbation_scales,
             mars_map_year=mars_map_year,
             mars_mgcm_dust_levels=mars_mgcm_dust_levels,
@@ -450,152 +715,26 @@ function GRAMAtmosphereModel(;
             mars_mola_heights=mars_mola_heights,
             mars_min_max=mars_min_max
         )
+
+        model = GRAMAtmosphereModel(
+            gram,
+            gram_atmosphere,
+            gram_root,
+            gram_data_root,
+            spice_root,
+            planet_key,
+            it,
+            offline_surrogate_supported,
+            offline_surrogate_unsupported_reason
+        )
+
+        if gram_static_grid_enabled() && _gram_static_grid_prebuild_all_planets_enabled() && !_GRAM_STATIC_GRID_PREBUILD_IN_PROGRESS[]
+            wind_enabled = _parse_bool_env("SPACEAGORA_GRAM_STATIC_GRID_WIND", true)
+            precompute_gram_static_grids!(model; wind=wind_enabled)
+        end
+
+        model
     end
-
-    if !isempty(gram_library_path)
-        gram.set_library!(resolve_path(gram_library_path))
-    else
-        local_lib = joinpath(gram_root, "Build", "lib", "libGRAM.$(_gram_lib_extension())")
-        if isfile(local_lib)
-            gram.set_library!(local_lib)
-        end
-    end
-
-    spice_root = _resolve_spice_directory(gram_root, spice_directory, gram_data_directory)
-    gram.initialize!(spice_root)
-
-    gram_data_root = _resolve_gram_data_root(gram_root, gram_data_directory)
-    body = _gram_body(gram, planet_key)
-    data_path = _gram_data_path(gram_data_root, planet_key)
-    gram_atmosphere = data_path === nothing ? gram.create_atmosphere(body) : gram.create_atmosphere(body; data_path=data_path)
-
-    gram.set_start_time!(
-        gram_atmosphere;
-        year=Int(it.year),
-        month=Int(it.month),
-        day=Int(it.day),
-        hour=Int(it.hour),
-        minute=Int(it.minute),
-        seconds=Float64(it.second),
-        scale=1,
-        frame=1
-    )
-
-    if isdefined(gram, :set_seed!)
-        gram.set_seed!(gram_atmosphere, seed)
-    elseif seed != 1001 && !_GRAM_SEED_WARNING_EMITTED[]
-        _GRAM_SEED_WARNING_EMITTED[] = true
-        @warn "GRAMAtmosphereModel seed is ignored by the current Julia GRAM wrapper."
-    end
-
-    if gram_min_relative_step_size !== nothing && isdefined(gram, :set_min_relative_step_size!)
-        gram.set_min_relative_step_size!(gram_atmosphere, Float64(gram_min_relative_step_size))
-    end
-
-    if gram_perturbation_scales !== nothing && isdefined(gram, :set_perturbation_scales!)
-        if gram_perturbation_scales isa Real
-            scale = Float64(gram_perturbation_scales)
-            gram.set_perturbation_scales!(
-                gram_atmosphere;
-                density_scale=scale,
-                ew_wind_scale=scale,
-                ns_wind_scale=scale,
-                vertical_wind_scale=scale
-            )
-        else
-            s = gram_perturbation_scales
-            gram.set_perturbation_scales!(
-                gram_atmosphere;
-                density_scale=Float64(s[1]),
-                ew_wind_scale=Float64(s[2]),
-                ns_wind_scale=Float64(s[3]),
-                vertical_wind_scale=Float64(s[4])
-            )
-        end
-    end
-
-    if planet_key == "mars"
-        if mars_map_year !== nothing && isdefined(gram, :set_map_year!)
-            gram.set_map_year!(gram_atmosphere, Int(mars_map_year))
-        end
-        if mars_mgcm_dust_levels !== nothing && isdefined(gram, :set_mgcm_dust_levels!)
-            gram.set_mgcm_dust_levels!(
-                gram_atmosphere;
-                constant_level=Float64(mars_mgcm_dust_levels[1]),
-                min_level=Float64(mars_mgcm_dust_levels[2]),
-                max_level=Float64(mars_mgcm_dust_levels[3])
-            )
-        end
-        if mars_dust_storm !== nothing && isdefined(gram, :set_dust_storm!)
-            ds = mars_dust_storm
-            gram.set_dust_storm!(
-                gram_atmosphere;
-                longitude_sun=Float64(ds[1]),
-                duration=Float64(ds[2]),
-                intensity=Float64(ds[3]),
-                max_radius=Float64(ds[4]),
-                latitude=Float64(ds[5]),
-                longitude=Float64(ds[6])
-            )
-        end
-        if mars_f107 !== nothing && isdefined(gram, :set_f107!)
-            gram.set_f107!(gram_atmosphere, Float64(mars_f107))
-        end
-        if mars_wind_scales !== nothing && isdefined(gram, :set_wind_scales!)
-            gram.set_wind_scales!(
-                gram_atmosphere;
-                mean_winds=Float64(mars_wind_scales[1]),
-                boundary_layer_winds=Float64(mars_wind_scales[2])
-            )
-        end
-        # Height reference: native MarsGRAM defaults to isMolaHeights=true, i.e.
-        # input heights measured above the MOLA areoid at planetocentric latitude.
-        # Callers of this wrapper (SpaceAGORA) supply Bowring geodetic altitudes
-        # above the IAU reference ellipsoid; reading those as areoid heights is a
-        # ~0-2 km reference-surface error (largest at polar latitudes), worth
-        # ~25% density at aerobraking heights. Default to ellipsoid-referenced
-        # heights unless the caller explicitly opts into MOLA. NOTE: MOLA heights
-        # require planetocentric inputs (native GRAM throws otherwise), so an
-        # explicit mars_mola_heights=true is incompatible with the planetodetic
-        # position inputs used by density_state and will error at first query.
-        if isdefined(gram, :set_mola_heights!)
-            gram.set_mola_heights!(gram_atmosphere, mars_mola_heights === nothing ? false : mars_mola_heights)
-        end
-        if mars_min_max !== nothing && isdefined(gram, :set_min_max!)
-            gram.set_min_max!(gram_atmosphere, Int(mars_min_max))
-        end
-    end
-
-    offline_surrogate_supported, offline_surrogate_unsupported_reason = _gram_offline_surrogate_features_supported(
-        planet_key;
-        gram_perturbation_scales=gram_perturbation_scales,
-        mars_map_year=mars_map_year,
-        mars_mgcm_dust_levels=mars_mgcm_dust_levels,
-        mars_dust_storm=mars_dust_storm,
-        mars_f107=mars_f107,
-        mars_wind_scales=mars_wind_scales,
-        mars_mola_heights=mars_mola_heights,
-        mars_min_max=mars_min_max
-    )
-
-    model = GRAMAtmosphereModel(
-        gram,
-        gram_atmosphere,
-        gram_root,
-        gram_data_root,
-        spice_root,
-        planet_key,
-        it,
-        offline_surrogate_supported,
-        offline_surrogate_unsupported_reason
-    )
-
-    if gram_static_grid_enabled() && _gram_static_grid_prebuild_all_planets_enabled() && !_GRAM_STATIC_GRID_PREBUILD_IN_PROGRESS[]
-        wind_enabled = _parse_bool_env("SPACEAGORA_GRAM_STATIC_GRID_WIND", true)
-        precompute_gram_static_grids!(model; wind=wind_enabled)
-    end
-
-    return model
 end
 
 function GRAMAtmosphereModelSurrogate(;
@@ -668,12 +807,7 @@ end
     elseif mode in ("off", "false", "0", "no")
         return false
     elseif mode == "auto"
-        env_lib = strip(get(ENV, "GRAM_LIB", ""))
-        if !isempty(env_lib)
-            return !isfile(resolve_path(env_lib))
-        end
-        local_lib = joinpath(gram_root, "Build", "lib", "libGRAM.$(_gram_lib_extension())")
-        return !isfile(local_lib)
+        return _find_gram_library(gram_root) === nothing
     end
     throw(ArgumentError(
         "Unsupported SPACEAGORA_GRAM_OFFLINE_SURROGATE='$mode'. Use one of: off, on, auto."
@@ -917,6 +1051,53 @@ function _gram_offline_surrogate_eval(
     return rho, Ti, SVector{3, Float64}(wE, wN, wU)
 end
 
+# libGRAM.dylib statically links its own private copy of CSPICE (`otool -L`
+# shows no dependency on any external libcspice), completely isolated from the
+# CSPICE instance SPACEAGORA's own SPICE.jl uses. GRAM populates its isolated
+# pool entirely through its own SpiceLoader, whose default per-body SPK file
+# is Sun-inclusive only for Earth/Venus (a full planetary ephemeris); for
+# Mars/Jupiter/Saturn/Uranus/Neptune/Titan the default is a satellites-only
+# kernel. Confirmed by direct replication via SPICE.jl (same kernels, same
+# calls, same epoch) that GRAM's own internal solar-geometry calls
+# (Ephemeris::updateLongitudeOfTheSun/updateOneWayLightTime, both needed by
+# every update() once fast-mode's first call fires) fail unconditionally for
+# Mars regardless of what SpaceAGORA furnishes on the Julia side -- this is
+# not a missing-kernel-data problem, since the exact same lspcn_c/ltime_c
+# calls succeed against the exact same kernel set via SPICE.jl.
+#
+# Workaround: Ephemeris::update() skips all of its own SPICE calls entirely
+# when a caller supplies ephemeris values directly via setEphemerisState_C
+# (see EphemerisState::userInputs in the vendored C++). SpaceAGORAGRAMSuiteExt
+# populates this hook with a SPICE.jl-based equivalent (same formulas,
+# working CSPICE instance) so GRAM never has to touch its own broken internal
+# ephemeris path. Left `nothing` when GRAMSuite is used standalone (without
+# the SpaceAGORA extension loaded), preserving GRAM's native behavior --
+# which remains correct for Earth today.
+const _GRAM_EPHEMERIS_STATE_FN = Ref{Union{Nothing, Function}}(nothing)
+
+function _gram_apply_user_ephemeris_state!(
+    model::GRAMAtmosphereModel,
+    lat::Float64,
+    lon::Float64,
+    el_time::Float64
+)::Nothing
+    fn = _GRAM_EPHEMERIS_STATE_FN[]
+    fn === nothing && return nothing
+    state = fn(model.planet_name, model.initial_time, el_time, rad2deg(lat), rad2deg(lon))
+    state === nothing && return nothing
+    EphemerisStateC = Base.invokelatest(getfield, model.gram, Symbol("EphemerisStateC"))
+    set_ephemeris_state! = Base.invokelatest(getfield, model.gram, Symbol("set_ephemeris_state!"))
+    # EphemerisStateC(state...) is itself a call to a dynamically-loaded type's
+    # constructor -- fetching the type object via an invokelatest'd getfield
+    # (above) is not enough; *calling* it also needs invokelatest, or a caller
+    # whose own frame was compiled after the dynamic GRAM wrapper load throws
+    # MethodError(EphemerisStateC, ..., world_age=...) here even though the
+    # type object it's calling is the correct (current) one.
+    ephemeris_state = Base.invokelatest(EphemerisStateC, state...)
+    Base.invokelatest(set_ephemeris_state!, model.gram_atmosphere, ephemeris_state)
+    return nothing
+end
+
 function _gram_density_state_native(
     model::GRAMAtmosphereModel,
     h::Float64,
@@ -925,21 +1106,15 @@ function _gram_density_state_native(
     el_time::Float64,
     wind::Bool
 )::Tuple{Float64, Float64, SVector{3, Float64}}
+    _gram_apply_user_ephemeris_state!(model, lat, lon, el_time)
     set_position! = Base.invokelatest(getfield, model.gram, Symbol("set_position!"))
-    # The (latitude, height) pair supplied by callers is Bowring PLANETODETIC
-    # latitude with GEODETIC height above the reference ellipsoid; native GRAM
-    # converts the pair to planetocentric internally when is_planetocentric=false
-    # (common/Position::convertToPlanetocentric). Labeling it planetocentric —
-    # the wrapper's old behavior — mis-references the height by the local
-    # areoid/ellipsoid geometry (up to ~2 km at Mars polar latitudes).
     Base.invokelatest(
         set_position!,
         model.gram_atmosphere;
         height=h * 1e-3,
         latitude=rad2deg(lat),
         longitude=rad2deg(lon),
-        elapsed_time=el_time,
-        is_planetocentric=false
+        elapsed_time=el_time
     )
 
     update! = Base.invokelatest(getfield, model.gram, Symbol("update!"))
@@ -1394,6 +1569,62 @@ function Base.deepcopy_internal(model::GRAMAtmosphereModelSurrogate, stackdict::
     )
     stackdict[model] = copied
     return copied
+end
+
+# ---------------------------------------------------------------------------
+# Custom Serialization: GRAMAtmosphereModel wraps a live native library handle
+# (`gram`, a dynamically-loaded module) and an opaque `gram_atmosphere` C
+# handle -- neither is meaningful across a process boundary. Serialize only
+# the plain-data constructor arguments already stored on the struct (the same
+# fields `deepcopy_internal` above uses) and reconstruct a fresh, independent
+# model via the ordinary keyword constructor -- now locked (see
+# `_with_gram_lock`/`_gram_default_lock`) -- on the receiving side. This lets
+# a `SimulationConfiguration` holding a GRAM density model be shipped through
+# `Distributed` (e.g. `remotecall`) exactly like any other value, without the
+# caller needing to know the model isn't "really" serializable.
+# ---------------------------------------------------------------------------
+
+function Serialization.serialize(s::Serialization.AbstractSerializer, model::GRAMAtmosphereModel)
+    Serialization.writetag(s.io, Serialization.OBJECT_TAG)
+    Serialization.serialize(s, GRAMAtmosphereModel)
+    Serialization.serialize(s, model.gram_root)
+    Serialization.serialize(s, model.gram_data_root)
+    Serialization.serialize(s, model.spice_root)
+    Serialization.serialize(s, model.planet_name)
+    Serialization.serialize(s, model.initial_time)
+    return nothing
+end
+
+function Serialization.deserialize(s::Serialization.AbstractSerializer, ::Type{GRAMAtmosphereModel})
+    gram_root = Serialization.deserialize(s)
+    gram_data_root = Serialization.deserialize(s)
+    spice_root = Serialization.deserialize(s)
+    planet_name = Serialization.deserialize(s)
+    initial_time = Serialization.deserialize(s)
+    return Base.invokelatest(
+        GRAMAtmosphereModel;
+        gram_root_directory=gram_root,
+        gram_data_directory=gram_data_root,
+        spice_directory=spice_root,
+        planet_name=planet_name,
+        initial_time=initial_time
+    )
+end
+
+function Serialization.serialize(s::Serialization.AbstractSerializer, model::GRAMAtmosphereModelSurrogate)
+    Serialization.writetag(s.io, Serialization.OBJECT_TAG)
+    Serialization.serialize(s, GRAMAtmosphereModelSurrogate)
+    Serialization.serialize(s, model.base_model)
+    Serialization.serialize(s, model.surrogate_file)
+    Serialization.serialize(s, model.point_fallback_below_m)
+    return nothing
+end
+
+function Serialization.deserialize(s::Serialization.AbstractSerializer, ::Type{GRAMAtmosphereModelSurrogate})
+    base_model = Serialization.deserialize(s)
+    surrogate_file = Serialization.deserialize(s)
+    point_fallback_below_m = Serialization.deserialize(s)
+    return GRAMAtmosphereModelSurrogate(base_model, surrogate_file, point_fallback_below_m)
 end
 
 end # module GRAMSuite
