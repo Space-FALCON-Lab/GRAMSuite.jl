@@ -6,10 +6,24 @@ A Julia package for querying planetary atmosphere models using NASA's Global Ref
 
 - Julia 1.10 or later
 - NASA GRAM Suite 2.0 (see [Acquiring GRAM](#acquiring-gram))
-- A C build toolchain:
-  - **macOS:** GNU Make (`brew install make`)
-  - **Linux:** `make` and a C compiler (GCC)
+- Git LFS (`git lfs install`) — this repository stores its `.jls` surrogate
+  payloads and SPICE kernels via LFS
+- A C/C++ toolchain and GNU Make:
+  - **Linux:** `gcc`/`g++` and `make`
+  - **macOS:** Clang from the Xcode command-line tools, plus GNU Make
+    (`brew install make` — the build files use GNU Make features that the
+    `/usr/bin/make` shipped with macOS does not support, so `gmake` is required)
   - **Windows:** MSYS2/MinGW with `mingw32-make`
+- CSPICE, which is normally already handled for you:
+  - **Linux x86_64 and Windows MinGW** — an archive ships inside the GRAM Suite
+    distribution and is selected automatically. Nothing to install.
+  - **macOS** — `brew install cspice`
+  - **Linux arm64/aarch64** — no bundled archive; see
+    [CSPICE on unbundled platforms](#cspice-on-unbundled-platforms)
+
+You do **not** need a Fortran compiler. GRAM's build configuration names
+`gfortran`, but `Build/makefile.defs` ends with `undefine FC`, which disables
+the Fortran example targets — the shared-library build never invokes it.
 
 ## Acquiring GRAM
 
@@ -23,35 +37,124 @@ Once approved, you will receive an archive containing the GRAM Suite source code
 
 ### 1. Build the shared library
 
-From the repository root, run the provided build script and pass the path to your `GRAM Suite 2.0` folder:
+The Julia package calls GRAM through FFI, so the native shared library must be
+compiled once per machine. It is never shipped prebuilt, and a library built on
+one machine is not usable on another.
+
+One command does the whole thing. The path argument is optional — the script
+walks up from its own location to find the tree containing `Build/` and
+`Julia/`:
 
 **macOS / Linux:**
 ```bash
-cd "GRAM Suite 2.0/simulation/GRAM"
-./build_gram.sh "$(pwd)/../.."
+"GRAM Suite 2.0/simulation/GRAM/build_gram.sh"
 ```
 
 **Windows (PowerShell):**
 ```powershell
-cd "GRAM Suite 2.0\simulation\GRAM"
-.\build_gram.ps1 (Resolve-Path "..\..").Path
+& ".\GRAM Suite 2.0\simulation\GRAM\build_gram.ps1"
 ```
 
 **Windows (CMD):**
 ```cmd
-cd "GRAM Suite 2.0\simulation\GRAM"
-build_gram.cmd "%CD%\..\.."
+"GRAM Suite 2.0\simulation\GRAM\build_gram.cmd"
 ```
 
-The script detects your platform, runs `setup_cspice.sh`, and produces the shared library:
+Pass an explicit root only if this folder has been moved outside a GRAM Suite
+tree — quote it, since the default folder name contains a space:
+`./build_gram.sh "/absolute/path/to/GRAM Suite 2.0"`.
 
-| Platform | Output |
-|----------|--------|
-| Linux    | `GRAM Suite 2.0/Build/lib/libGRAM.so` |
-| macOS    | `GRAM Suite 2.0/Build/lib/libGRAM.dylib` |
-| Windows  | `GRAM Suite 2.0/Build/lib/libGRAM.dll` |
+The script, in order:
 
-It also writes a `gram.env` file (shell) with `GRAM_ROOT` and `GRAM_LIB` set for the current machine.
+1. runs `Build/setup_cspice.sh` to put the correct CSPICE archive in place —
+   **do not run this yourself**
+2. runs `make shared` with one job per core, using the right make binary for
+   the host (`make`, `gmake`, or `mingw32-make`)
+3. produces the shared library:
+
+   | Platform | Output |
+   |----------|--------|
+   | Linux    | `GRAM Suite 2.0/Build/lib/libGRAM.so` |
+   | macOS    | `GRAM Suite 2.0/Build/lib/libGRAM.dylib` |
+   | Windows  | `GRAM Suite 2.0/Build/lib/libGRAM.dll` |
+
+4. writes `simulation/GRAM/gram.env` (`gram.env.ps1` on Windows) exporting
+   `GRAM_ROOT` and `GRAM_LIB` for this machine
+5. writes `simulation/GRAM/.gram-build-manifest`, recording the host platform
+   and root path the artifacts were built for
+
+A build from clean takes roughly 20 seconds on 24 cores, or about 3 minutes of
+total CPU time.
+
+`gram.env` and `.gram-build-manifest` contain absolute paths for the machine
+that produced them. They are gitignored and must never be committed — a
+committed one makes the next person's build fail against a path that does not
+exist on their machine.
+
+#### Building by hand
+
+The wrapper is the supported path. If you need to drive `make` yourself:
+
+```bash
+cd "GRAM Suite 2.0/Build"
+./setup_cspice.sh
+make clean && make shared -j        # gmake on macOS, mingw32-make on Windows
+```
+
+`make shared` is the only target that produces `libGRAM`. Plain `make` builds
+the static per-planet libraries and the example executables but **not** the
+shared library, and neither do the per-planet targets — `make Mars -j` leaves
+`Build/lib` with `libMars.a` and no `libGRAM.so`. There is no single-planet
+shortcut to a smaller `libGRAM`; the `shared` target links every planet.
+
+Driving `make` by hand also writes no `.gram-build-manifest`, so the staleness
+detection described below has nothing to compare against on the next wrapper
+run.
+
+#### Rebuilding
+
+Add `--clean` (`-Clean` in PowerShell) to force a full rebuild:
+
+```bash
+"GRAM Suite 2.0/simulation/GRAM/build_gram.sh" --clean
+```
+
+You usually do not need it. The build manifest records the host tag and root
+path, and the script cleans automatically when either has changed — so moving
+or renaming the tree on the same machine is handled for you, and so is a tree
+that arrived from a different operating system.
+
+Reach for `--clean` when a tree was copied from another machine **with
+`Build/lib` already populated**, since an existing library of the right name
+can otherwise be mistaken for a native one.
+
+#### CSPICE on unbundled platforms
+
+`setup_cspice.sh` normalizes the archive name the makefiles expect:
+
+- **Linux x86_64** — bundled `common/cspice/lib/cspice_gcc85.a` is copied to
+  `cspice_linux_x86_64.a`
+- **Windows MinGW** — bundled `common/cspice/lib/cspice_mingw64.a` is used as-is
+- **macOS** — taken from Homebrew (`brew install cspice`)
+- **Linux arm64/aarch64** — no bundled archive. Install CSPICE so that one of
+  `/usr/lib/libcspice.a`, `/usr/local/lib/libcspice.a`, `/usr/lib64/libcspice.a`,
+  or `/usr/lib/aarch64-linux-gnu/libcspice.a` exists, or build with an explicit
+  override:
+
+  ```bash
+  cd "GRAM Suite 2.0/Build"
+  make shared -j SPICE_LIB=/absolute/path/to/cspice.a
+  ```
+
+#### Troubleshooting the build
+
+| Symptom | Cause and fix |
+|---|---|
+| `Build finished but shared library not found`, naming a path that is not yours | A `gram.env`/`.gram-build-manifest` from another machine is present. Delete both and re-run. |
+| `Could not auto-find a Linux CSPICE archive` | Architecture with no bundled archive — see above. |
+| `gmake not found` on macOS | `brew install make`. GNU Make is required. |
+| `make` succeeded but there is no `libGRAM` | You ran `make` or a per-planet target instead of `make shared`. |
+| Library builds, but a planet errors at query time | A data problem, not a build problem. Run `git lfs pull` and confirm the planet's `data/` folder came across from the GRAM distribution. |
 
 ### 2. Install the Julia package
 
@@ -67,16 +170,23 @@ Pkg.develop(path=".")
 Or add it to another project:
 
 ```julia
-Pkg.add(url="https://github.com/your-org/GRAMSuite.jl")
+Pkg.add(url="https://github.com/Space-FALCON-Lab/GRAMSuite.jl")
 ```
 
 ### 3. Verify the installation
 
-Run the smoke test (requires `GRAM_ROOT` to be set or the library already built):
+Run the smoke test. It sources the `gram.env` written by the build step, so
+run the build first:
 
 ```bash
-cd "GRAM Suite 2.0/simulation/GRAM"
-./run_julia_smoke_test.sh
+"GRAM Suite 2.0/simulation/GRAM/run_julia_smoke_test.sh"
+```
+
+To run Julia directly instead, source that file yourself:
+
+```bash
+source "GRAM Suite 2.0/simulation/GRAM/gram.env"
+julia "GRAM Suite 2.0/simulation/GRAM/julia_smoke_test.jl"
 ```
 
 Expected output includes `GRAM smoke test passed` and sample atmospheric state values.
