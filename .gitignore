@@ -1,1 +1,16 @@
 CLAUDE.md
+
+# Native build artifacts: compiled per-host, never portable between machines.
+# `gram.env` and `.gram-build-manifest` record absolute paths for the machine
+# that built them -- committing either one makes a fresh clone's first build
+# fail against a path that does not exist on it.
+*.o
+*.a
+*.so
+*.dylib
+GRAM Suite 2.0/Build/bin/
+GRAM Suite 2.0/Build/lib/
+GRAM Suite 2.0/Build/mod/
+GRAM Suite 2.0/simulation/GRAM/gram.env
+GRAM Suite 2.0/simulation/GRAM/gram.env.ps1
+GRAM Suite 2.0/simulation/GRAM/.gram-build-manifest

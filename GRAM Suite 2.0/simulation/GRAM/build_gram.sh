@@ -162,16 +162,24 @@ echo "HOST_TAG:  ${HOST_TAG}"
 
 BUILD_MANIFEST="${SCRIPT_DIR}/${BUILD_MANIFEST_NAME}"
 GRAM_LIB="${GRAM_ROOT}/Build/lib/libGRAM.$(expected_lib_ext "${OS}")"
+REQUESTED_GRAM_LIB="${GRAM_LIB}"
 REQUESTED_GRAM_ROOT="${GRAM_ROOT}"
 if [[ "${CLEAN_BUILD}" -eq 0 ]]; then
   if [[ -f "${BUILD_MANIFEST}" ]]; then
     # shellcheck disable=SC1090
     source "${BUILD_MANIFEST}"
-    if [[ "${GRAM_HOST:-}" != "${HOST_TAG}" || "${GRAM_ROOT:-}" != "${REQUESTED_GRAM_ROOT}" ]]; then
+    if [[ "${GRAM_HOST:-}" != "${HOST_TAG}" ]]; then
       CLEAN_BUILD=1
-      echo "Detected stale build artifacts for host '${GRAM_HOST:-unknown}'. Rebuilding for ${HOST_TAG}."
+      echo "Build artifacts were made for host '${GRAM_HOST:-unknown}', not ${HOST_TAG}. Rebuilding clean."
+    elif [[ "${GRAM_ROOT:-}" != "${REQUESTED_GRAM_ROOT}" ]]; then
+      CLEAN_BUILD=1
+      echo "Build artifacts were made for a different root:"
+      echo "  was: ${GRAM_ROOT:-unknown}"
+      echo "  now: ${REQUESTED_GRAM_ROOT}"
+      echo "Rebuilding clean."
     fi
     GRAM_ROOT="${REQUESTED_GRAM_ROOT}"
+    GRAM_LIB="${REQUESTED_GRAM_LIB}"
   elif [[ -d "${GRAM_ROOT}/Build/lib" && ! -f "${GRAM_LIB}" ]]; then
     CLEAN_BUILD=1
     echo "Detected existing build outputs without a native ${GRAM_LIB##*/}. Rebuilding clean."

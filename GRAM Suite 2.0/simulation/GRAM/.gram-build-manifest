@@ -1,3 +1,0 @@
-GRAM_ROOT="/Users/josephine/.julia/dev/SpaceAGORA.jl/GRAM Suite 2.0"
-GRAM_LIB="/Users/josephine/.julia/dev/SpaceAGORA.jl/GRAM Suite 2.0/Build/lib/libGRAM.dylib"
-GRAM_HOST="macos-arm64"

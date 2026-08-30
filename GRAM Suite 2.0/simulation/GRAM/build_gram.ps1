@@ -112,8 +112,17 @@ if (-not $Clean) {
     $manifest = Read-BuildManifest -Path $BuildManifest
     $manifestRoot = $manifest["GRAM_ROOT"]
     $manifestHost = $manifest["GRAM_HOST"]
-    if (($manifestHost -and $manifestHost -ne $HostTag) -or ($manifestRoot -and $manifestRoot -ne $GramRoot)) {
-        Write-Host "Detected stale build artifacts for host '$manifestHost'. Rebuilding for $HostTag."
+    if ($manifestHost -and $manifestHost -ne $HostTag) {
+        Write-Host "Build artifacts were made for host '$manifestHost', not $HostTag. Rebuilding clean."
+        & $MakeBin -C $BuildDir clean
+        if ($LASTEXITCODE -ne 0) {
+            throw "Clean failed with exit code $LASTEXITCODE"
+        }
+    } elseif ($manifestRoot -and $manifestRoot -ne $GramRoot) {
+        Write-Host "Build artifacts were made for a different root:"
+        Write-Host "  was: $manifestRoot"
+        Write-Host "  now: $GramRoot"
+        Write-Host "Rebuilding clean."
         & $MakeBin -C $BuildDir clean
         if ($LASTEXITCODE -ne 0) {
             throw "Clean failed with exit code $LASTEXITCODE"
