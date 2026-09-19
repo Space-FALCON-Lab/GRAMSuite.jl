@@ -1,0 +1,54 @@
+# Reproduces the accepted diagnostic fine-grid settings, not a released preset.
+schema_version = 1
+id = "odyssey_p20_frozen_v1"
+version = "1.0.0"
+planet = "mars"
+
+[time]
+epoch_utc = "2001-11-07T11:51:04.794789Z"
+scale = "UTC"
+scale_code = 1
+frame = "planet_event_time"
+frame_code = 0
+elapsed_seconds = 0.0
+
+[coordinates]
+latitude = "geodetic"
+height = "ellipsoidal_km"
+longitude = "east_positive_periodic_degrees"
+radii_mode = "explicit"
+equatorial_radius_km = 3396.190
+polar_radius_km = 3376.200
+
+[atmosphere]
+seed = 1001
+perturbation_action = false
+perturbation_scales = [0.0, 0.0, 0.0, 0.0]
+wind_product = "nominal_mean_ENU"
+
+[mars]
+map_year = 2
+min_max = 1
+mola_heights = false
+dust_mode = "native-default"
+
+[grid]
+altitude_bounds_km = [100.0, 260.0]
+altitude_step_km = 1.0
+latitude_bounds_deg = [40.0, 90.0]
+latitude_step_deg = 1.0
+longitude_bounds_deg = [0.0, 360.0]
+longitude_step_deg = 2.5
+longitude_endpoint = "periodic_without_duplicate"
+field_type = "Float64"
+
+[provenance]
+input_lock_file = "odyssey_p20_frozen_v1.inputs.toml"
+input_lock_sha256 = "4364c41709bfd58188925aef5d4212f331ba4f34b15317be6812e56c00aae733"
+native_model_label = "MarsGRAM 2021b :: GRAMLib 2023b :: GRAM Suite 2.0"
+native_library_sha256 = "19c5715b1d18c9b4f8afa315fb77466091cb240e7954bc84e8e4ab540e76e3f4"
+reference_grid_sha256 = "3643c9116b75c511d20edee2866e2b5ba06baaeba9e693c4f3ad1055a7820e8c"
+reference_builder_sha256 = "a514bbd1349dc6ac41182de40760d83c3089e061892dc4af3b26aa22c82af288"
+reference_status = "diagnostic_reference_only"
+unprobed_defaults = ["F10.7: no override; pinned native default, finite-point inference only", "dust/offset/wind settings: defaults retained; no complete effective-state readback"]
+pole_wind_policy = "Retain longitude-labelled ENU values. Exact-pole wind has no unique physical-vector claim; no averaging or new cutoff."
