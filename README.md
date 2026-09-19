@@ -27,6 +27,10 @@ Altitude/latitude coverage errors throw `DomainError`; longitude wraps periodica
 
 Run the repository's synthetic test suite with `julia --project -e 'using Pkg; Pkg.test()'` after dependencies are available. Tests use analytic grids and Julia stand-ins for native handles; they require neither GRAM assets nor a native library. Native construction and physical validation are separate from these tests.
 
+## Generate a new frozen grid
+
+The [recipe generation guide](docs/grid_generation.md) describes the separate advanced workflow for producing a frozen atmosphere with recorded settings and input checksums. The supplied Odyssey recipe reproduces an evaluated diagnostic configuration; it does not publish a preset or establish support for other planets and dates. Recipe validation and the generator tests run without native GRAM.
+
 ## Advanced native backend
 
 The remaining setup instructions apply to `GRAMAtmosphereModel` and native/hybrid workflows. They are not prerequisites for the fixed-grid API. Native keyword construction retains its supplied reconstruction recipe for independent handle creation during copy/serialization. It does not preserve subsequent raw-handle mutations or an advanced random stream.

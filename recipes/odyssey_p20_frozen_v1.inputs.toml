@@ -1,0 +1,159 @@
+schema_version = 1
+planet = "mars"
+source = "Accepted Odyssey diagnostic fine run, 2026-09-18; inventory identities only; not an opened-file trace"
+
+[planet_data."MGCM_lower_data.bin"]
+sha256 = "25fad47a65550ec4b3643c77e701bf4413b7c7e828b8c05e0352bb4681207a64"
+size_bytes = 2784640
+
+[planet_data."MGCM_surface_data.bin"]
+sha256 = "20c3d3eca3521ae0b3b9c4f6ab64e3ff2ba75e635438d67fc7c3380c678c728b"
+size_bytes = 14391024
+
+[planet_data."MGCM_upper_data.bin"]
+sha256 = "395b48319bc603d3261ee3543556abcc816737dc9c875ae30a8231c40841fdf0"
+size_bytes = 10782768
+
+[planet_data."MOLA_data.bin"]
+sha256 = "210672330eccab09d0e64fa66d0a0184ac4b331b8fba498ed45c070b78421af4"
+size_bytes = 4708920
+
+[planet_data."README.md"]
+sha256 = "fd8856ebe3993036b6fcefeba7952915a73ddc2e5ac1ca5593567050ffc76e09"
+size_bytes = 579
+
+[planet_data."TES_dust_data.bin"]
+sha256 = "9704c3e177065ce415545e2ae26ade83a19cc3a134a12193a3a96b5a4ade15ee"
+size_bytes = 1152000
+
+[planet_data."TES_lower_data.bin"]
+sha256 = "ec5b3d7be5d9facf41a99f96c3d2df2f872ebb462021c1b721a63b2172d83832"
+size_bytes = 3276040
+
+[planet_data."TES_surface_data.bin"]
+sha256 = "3a86a5fdf33e7816b3a202d7096ee6ff7159ae4487f6ce875eefbd9f28928ca0"
+size_bytes = 9594024
+
+[planet_data."TES_upper_data.bin"]
+sha256 = "c6738304596a4a44de4acfd7bba9f2214171fb286d429be555a7111f8a61a95a"
+size_bytes = 18645168
+
+[spice_directory_inventory."lsk/naif0010.tls"]
+sha256 = "a3826c1f418a9601afdf92be815298aedfd7960b5c00f3a5c469df674e1436b4"
+size_bytes = 4920
+
+[spice_directory_inventory."lsk/naif0012.tls"]
+sha256 = "678e32bdb5a744117a467cd9601cd6b373f0e9bc9bbde1371d5eee39600a039b"
+size_bytes = 5257
+
+[spice_directory_inventory."pck/de_403_masses.tpc"]
+sha256 = "a94d175a004c9f3d146c4b7ec772c2d1ca1bb6b06ffe0af6aa3806bb92f94670"
+size_bytes = 1973
+
+[spice_directory_inventory."pck/earth_latest_high_prec.bpc"]
+sha256 = "7ad6d87b2db69a249d40588dc6bbc232baa4f20cddba5ed401b307d488e6c087"
+size_bytes = 5038080
+
+[spice_directory_inventory."pck/mars_iau2000_m2_quadratic_patch.tpc"]
+sha256 = "850411a8d7dba8aea76492ee8e7f892bea3d3f619b13698252e294b0a3cb766d"
+size_bytes = 5759
+
+[spice_directory_inventory."pck/pck00008.tpc"]
+sha256 = "ca07df56e9f1bca85a4c6748b618a46c0bf8e081f96f81e324896f2fdc54ea27"
+size_bytes = 111586
+
+[spice_directory_inventory."pck/pck00010.tpc"]
+sha256 = "59468328349aa730d18bf1f8d7e86efe6e40b75dfb921908f99321b3a7a701d2"
+size_bytes = 126143
+
+[spice_directory_inventory."pck/pck00011.tpc"]
+sha256 = "3dff7b1dbeceaa01f25467767d3fa25816051c85d162d1edf04acb310ee28bb1"
+size_bytes = 131226
+
+[spice_directory_inventory."spk/missions/ORVV_T19_140501000000_00546.BSP"]
+sha256 = "fefb20f7ef2de05c9a2e393796bf6cd7e72e07bb119a34dd8fb34c4c2664a127"
+size_bytes = 5033984
+
+[spice_directory_inventory."spk/missions/ORVV_T19_140601000000_00546.BSP"]
+sha256 = "47ba1deb47edbf325649297a0575cfac385d2ae35f3b6c0e25b3f009e4679a0f"
+size_bytes = 5194752
+
+[spice_directory_inventory."spk/missions/ORVV_T19_140701000000_00551.BSP"]
+sha256 = "c223d6e71412839b6ada7d73b05375d5c590ce24c5ce2094d8ab934aab34876a"
+size_bytes = 5271552
+
+[spice_directory_inventory."spk/missions/m01_ab_v2.bsp"]
+sha256 = "8e34e9cb08f0e6446435f0594f884a0d5c5c7a72d19c1273b81587b6dcf9a7a5"
+size_bytes = 165260288
+
+[spice_directory_inventory."spk/missions/mro_ab.bsp"]
+sha256 = "4e8a292f4ce59674f918043656a16e827fad47ef5a0280c6a1ee9382205ab6dc"
+size_bytes = 120755200
+
+[spice_directory_inventory."spk/planets/de405.bsp"]
+sha256 = "30a7113793ee5b6bf1e5546c6dfc21d9682d9ffabfe9b17b4bab27ba2ac75c89"
+size_bytes = 10898432
+
+[spice_directory_inventory."spk/planets/de421.bsp"]
+sha256 = "08b20db2ae22488650641c5a9033e5bfda4b1c4b440cfeaf20f621cfa18ecdb3"
+size_bytes = 16790528
+
+[spice_directory_inventory."spk/planets/de430.bsp"]
+sha256 = "6e1b277c5f07135a84950604b83e56b736be696a7f3560bcddb1d4aeb944fca1"
+size_bytes = 119741440
+
+[spice_directory_inventory."spk/planets/de440_GRAM.bsp"]
+sha256 = "454cdc7409d46a7b42070d623fce1f566405a0345b7960d38fcd0654eea0230e"
+size_bytes = 4973568
+
+[spice_directory_inventory."spk/planets/de440s.bsp"]
+sha256 = "c1c7feeab882263fc493a9d5a5b2ddd71b54826cdf65d8d17a76126b260a49f2"
+size_bytes = 32726016
+
+[spice_directory_inventory."spk/satellites/SPICELunaCurrentKernel.bpc"]
+sha256 = "656f90616403d75a75f0cd6c8830fc5b44f8cb4facb5ccb8915e752b397520cf"
+size_bytes = 1770496
+
+[spice_directory_inventory."spk/satellites/jup365_GRAM.bsp"]
+sha256 = "444f5ae226244ca055f2d3177d49cc69148469c8879eb8c5b7acd72b29fc655b"
+size_bytes = 11119616
+
+[spice_directory_inventory."spk/satellites/mar097_GRAM.bsp"]
+sha256 = "20ebcc5f245d98a20d3cc2acc9f91d29503ad68268ef5e33264e8c76bc924bff"
+size_bytes = 63149056
+
+[spice_directory_inventory."spk/satellites/moon_pa_de403_1950-2198.bpc"]
+sha256 = "bdca24a29ad4a8051ca1c3b2aca911f5b8c7777c10487d89b8313a5207165f84"
+size_bytes = 2922496
+
+[spice_directory_inventory."spk/satellites/moon_pa_de440_200625.bpc"]
+sha256 = "60cd55aa401ea2ea97360636f567554bfe4e37bb829f901b4460a455dfaf783f"
+size_bytes = 12863488
+
+[spice_directory_inventory."spk/satellites/nep101_GRAM.bsp"]
+sha256 = "f92a5f86b93ae34a7095459924a21909f57cff0a28275dffc7ef2197e88ca794"
+size_bytes = 5850112
+
+[spice_directory_inventory."spk/satellites/sat441_GRAM.bsp"]
+sha256 = "06be5f4650f63ab32a79c44c1314c6c112e6b23b9791b4f684c681684b3ac2a5"
+size_bytes = 16579584
+
+[spice_directory_inventory."spk/satellites/ura116_GRAM.bsp"]
+sha256 = "c84ef3923044832d47a80fec5c7c56df8116e304f40f2aaa6720fa71736ade40"
+size_bytes = 8224768
+
+[spice_directory_inventory."tf/SPICELunaFrameKernel.tf"]
+sha256 = "78732477b96f9863e7b0d65bcee3c22b8707ca5ed0db56d1173319cb2e8c7993"
+size_bytes = 21437
+
+[spice_directory_inventory."tf/earth_assoc_itrf93.tf"]
+sha256 = "50ff8d76e48a5c4bfd9edc1eb6ac3bb15fd51b940df560d119830bd72c18c0d5"
+size_bytes = 7519
+
+[spice_directory_inventory."tf/moon_060721.tf"]
+sha256 = "1491d95fdc6d7e91af0ff5911b5d93647bed7b36d3b2fcb29cdc0fb5b6c6bed1"
+size_bytes = 18075
+
+[spice_directory_inventory."tf/moon_080317.tf"]
+sha256 = "78732477b96f9863e7b0d65bcee3c22b8707ca5ed0db56d1173319cb2e8c7993"
+size_bytes = 21437

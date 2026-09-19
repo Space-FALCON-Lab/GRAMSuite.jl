@@ -34,3 +34,7 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: Synthetic grids and native stand-ins
         run: julia --startup-file=no --project=. -e 'using Pkg; Pkg.test()'
+      - name: Generator and recipe regressions without native GRAM
+        run: |
+          julia --startup-file=no test/generator_builder_tests.jl
+          julia --startup-file=no test/generation_recipe_tests.jl
