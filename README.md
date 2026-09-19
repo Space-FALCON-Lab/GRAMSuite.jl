@@ -1,8 +1,39 @@
 # GRAMSuite.jl
 
-A Julia package for querying planetary atmosphere models using NASA's Global Reference Atmosphere Model (GRAM) Suite. Supports atmosphere density, temperature, and wind queries for Earth, Mars, Venus, Titan, Jupiter, Uranus, and Neptune.
+Julia interfaces for fixed atmosphere grids and the advanced native NASA GRAM Suite backend.
 
-## Prerequisites
+## Native-free fixed grids
+
+`GRAMGridAtmosphereModel` loads a trusted, downloaded grid without a native GRAM installation, SPICE kernels or a C/C++ toolchain. Install the Julia package from your checkout, then provide the grid explicitly:
+
+```julia
+using GRAMSuite
+
+model = GRAMGridAtmosphereModel(
+    planet="mars",
+    surrogate_file="/path/to/mars_surrogate.jls",
+    # expected_sha256="<64-character artifact digest>",
+)
+rho, temperature, wind_enu = density_state(
+    model, 153_000.0, deg2rad(77.5), deg2rad(315.0), 0.0, true,
+)
+```
+
+Inputs are altitude in metres, latitude/longitude in radians and elapsed seconds. Outputs are density in kg/m³, temperature in K and east/north/up winds in m/s. Elapsed time does not evolve this fixed snapshot; both wind flags return its stored winds. Use the payload's coordinate convention and generation epoch. The model retains supplied metadata without inventing missing provenance. Grid coverage and file integrity do not establish atmospheric accuracy or a mission-wide validity interval. Pole wind labels also require a separate physical consistency check.
+
+The loader accepts legacy `surrogate_trilinear` payloads and `full_grid` payloads with format `spaceagora_gram_static_grid_v1`. An explicit file takes precedence; otherwise `search_roots=["/grid/directory"]` searches for `<planet>_surrogate.jls` before known package locations. Missing files, empty files, undownloaded Git LFS pointers and invalid higher-priority files fail clearly. No data is downloaded automatically. Supply only trusted Julia-serialized artifacts. Public distribution and suitability of a particular grid must be established separately; this API does not promise that every checkout contains a usable public grid.
+
+Altitude/latitude coverage errors throw `DomainError`; longitude wraps periodically. The optional `above_grid=:vacuum` policy only permits zero density and wind above the altitude ceiling, at valid latitude. It is not enabled by default and does not permit lower-bound extrapolation. There is no native fallback. Keep model arrays/metadata read-only during concurrent queries; `deepcopy` creates an independent snapshot. A new constructor rereads the file and records its SHA256, while copied/serialized snapshots evaluate without reopening the file.
+
+Run the repository's synthetic test suite with `julia --project -e 'using Pkg; Pkg.test()'` after dependencies are available. Tests use analytic grids and Julia stand-ins for native handles; they require neither GRAM assets nor a native library. Native construction and physical validation are separate from these tests.
+
+## Advanced native backend
+
+The remaining setup instructions apply to `GRAMAtmosphereModel` and native/hybrid workflows. They are not prerequisites for the fixed-grid API. Native keyword construction retains its supplied reconstruction recipe for independent handle creation during copy/serialization. It does not preserve subsequent raw-handle mutations or an advanced random stream.
+
+Runtime static grids belong to their actual model instances. Warm the supplied model with `precompute_gram_static_grids!(model)`, or supply a vector of actual models. The former all-planets prebuild option is rejected because temporary models cannot prewarm other instances. Use `clear_gram_static_grid_cache!(model)` after manually changing native settings; global clear empties all live model banks. Independent copies can rebuild their own grids, so cross-copy performance remains workload dependent.
+
+### Native prerequisites
 
 - Julia 1.10 or later
 - NASA GRAM Suite 2.0 (see [Acquiring GRAM](#acquiring-gram))
@@ -25,7 +56,7 @@ You do **not** need a Fortran compiler. GRAM's build configuration names
 `gfortran`, but `Build/makefile.defs` ends with `undefine FC`, which disables
 the Fortran example targets — the shared-library build never invokes it.
 
-## Acquiring GRAM
+### Acquiring GRAM
 
 GRAM Suite 2.0 is controlled software distributed by NASA. Request a copy through the NASA Software Catalog:
 
@@ -33,7 +64,7 @@ GRAM Suite 2.0 is controlled software distributed by NASA. Request a copy throug
 
 Once approved, you will receive an archive containing the GRAM Suite source code, data files, and SPICE kernels. Place the extracted `GRAM Suite 2.0` folder at the root of this repository (alongside `src/` and `Project.toml`).
 
-## Setup
+### Native setup
 
 ### 1. Build the shared library
 

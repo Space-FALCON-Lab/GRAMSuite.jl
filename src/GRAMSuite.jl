@@ -2,9 +2,11 @@ module GRAMSuite
 
 using LinearAlgebra
 using Serialization
+using SHA
 using StaticArrays
 
 export InitialTime
+export GRAMGridAtmosphereModel, resolve_gram_grid_file
 export GRAMAtmosphereModel, GRAMAtmosphereModelSurrogate
 export point_density_state, density_state, surrogate_density_state
 export precompute_gram_static_grids!, clear_gram_static_grid_cache!, clear_gram_offline_surrogate_cache!
@@ -20,6 +22,13 @@ Base.@kwdef struct InitialTime
     second::Float32 = 0.0
 end
 
+# A distinct mutable token gives each immutable model its own grid-cache
+# namespace. Never derive ownership from native handle values or addresses.
+mutable struct _GRAMStaticGridCacheOwner
+    entries::Dict{Any, Any}
+end
+_GRAMStaticGridCacheOwner() = _GRAMStaticGridCacheOwner(Dict{Any, Any}())
+
 struct GRAMAtmosphereModel{G, GA}
     gram::G
     gram_atmosphere::GA
@@ -30,6 +39,62 @@ struct GRAMAtmosphereModel{G, GA}
     initial_time::InitialTime
     offline_surrogate_supported::Bool
     offline_surrogate_unsupported_reason::String
+    _static_grid_cache_owner::_GRAMStaticGridCacheOwner
+    is_planetocentric::Union{Nothing, Bool}
+    _constructor_kwargs::Union{Nothing, Dict{Symbol, Any}}
+end
+
+# Preserve both pre-existing nine-argument constructor forms. Every model
+# construction receives fresh ownership, even when all supplied fields match.
+function GRAMAtmosphereModel(
+    gram::G, gram_atmosphere::GA, gram_root::String,
+    gram_data_root::String, spice_root::String, planet_name::String,
+    initial_time::InitialTime, offline_surrogate_supported::Bool,
+    offline_surrogate_unsupported_reason::String
+) where {G, GA}
+    return GRAMAtmosphereModel{G, GA}(
+        gram, gram_atmosphere, gram_root, gram_data_root, spice_root,
+        planet_name, initial_time, offline_surrogate_supported,
+        offline_surrogate_unsupported_reason, _GRAMStaticGridCacheOwner(), nothing, nothing
+    )
+end
+
+function GRAMAtmosphereModel{G, GA}(
+    gram, gram_atmosphere, gram_root, gram_data_root, spice_root,
+    planet_name, initial_time, offline_surrogate_supported,
+    offline_surrogate_unsupported_reason
+) where {G, GA}
+    return GRAMAtmosphereModel{G, GA}(
+        gram, gram_atmosphere, gram_root, gram_data_root, spice_root,
+        planet_name, initial_time, offline_surrogate_supported,
+        offline_surrogate_unsupported_reason, _GRAMStaticGridCacheOwner(), nothing, nothing
+    )
+end
+
+# Preserve the prior explicit-cache-owner forms without inventing a recipe.
+function GRAMAtmosphereModel(
+    gram::G, gram_atmosphere::GA, gram_root::String,
+    gram_data_root::String, spice_root::String, planet_name::String,
+    initial_time::InitialTime, offline_surrogate_supported::Bool,
+    offline_surrogate_unsupported_reason::String, owner::_GRAMStaticGridCacheOwner
+) where {G, GA}
+    return GRAMAtmosphereModel{G, GA}(
+        gram, gram_atmosphere, gram_root, gram_data_root, spice_root, planet_name,
+        initial_time, offline_surrogate_supported, offline_surrogate_unsupported_reason,
+        owner, nothing, nothing
+    )
+end
+
+function GRAMAtmosphereModel{G, GA}(
+    gram, gram_atmosphere, gram_root, gram_data_root, spice_root, planet_name,
+    initial_time, offline_surrogate_supported, offline_surrogate_unsupported_reason,
+    owner::_GRAMStaticGridCacheOwner
+) where {G, GA}
+    return GRAMAtmosphereModel{G, GA}(
+        gram, gram_atmosphere, gram_root, gram_data_root, spice_root, planet_name,
+        initial_time, offline_surrogate_supported, offline_surrogate_unsupported_reason,
+        owner, nothing, nothing
+    )
 end
 
 struct GRAMAtmosphereModelSurrogate{M}
@@ -84,7 +149,10 @@ const _GRAM_WIND_WARNING_EMITTED = Ref(false)
 const _GRAM_NONFINITE_WIND_WARNING_EMITTED = Ref(false)
 const _GRAM_LOCK_OFF_WARNING_EMITTED = Ref(false)
 const _GRAM_STATIC_GRID_LOGGED = Ref(false)
-const _GRAM_STATIC_GRID_CACHE = Dict{Any, Any}()
+# Models strongly own their tokens and grid banks; the global registry holds
+# only weak owner references and no grid values. WeakKeyDict removes dead keys
+# lazily, so putting banks in its values would retain arrays until cleanup.
+const _GRAM_STATIC_GRID_CACHE = WeakKeyDict{_GRAMStaticGridCacheOwner, Nothing}()
 const _GRAM_STATIC_GRID_LOCK = ReentrantLock()
 const _GRAM_STATIC_GRID_PREBUILD_IN_PROGRESS = Ref(false)
 const _GRAM_OFFLINE_SURROGATE_CACHE = Dict{Any, Any}()
@@ -544,6 +612,55 @@ end
     return isempty(unsupported), join(unsupported, ",")
 end
 
+function _gram_required_setter(gram, name::Symbol, option::AbstractString)
+    isdefined(gram, name) || throw(ArgumentError(
+        "Requested GRAM option $option requires binding setter $name, which is unavailable. " *
+        "Use a binding that supports this option; it cannot be silently ignored."
+    ))
+    return getfield(gram, name)
+end
+
+function _gram_require_setter_keywords(gram, name::Symbol, atmos, keywords::Tuple, option::AbstractString)
+    setter = _gram_required_setter(gram, name, option)
+    hasmethod(setter, Tuple{typeof(atmos)}, keywords) || throw(ArgumentError(
+        "Requested GRAM option $option requires $name with keywords $(join(keywords, ", ")). " *
+        "The loaded binding does not support that call."
+    ))
+    return nothing
+end
+
+function _gram_require_setter_args(gram, name::Symbol, args::Tuple, option::AbstractString)
+    setter = _gram_required_setter(gram, name, option)
+    hasmethod(setter, Tuple{map(typeof, args)...}) || throw(ArgumentError(
+        "Requested GRAM option $option is unsupported by the loaded $name binding method."
+    ))
+    return nothing
+end
+
+"""
+    GRAMAtmosphereModel(; is_planetocentric=nothing, equatorial_radius_km=nothing,
+                       polar_radius_km=nothing, perturbation_action=nothing,
+                       start_time_scale=1, start_time_frame=1, kwargs...)
+
+Construct a native model. Reference settings are opt-in: `is_planetocentric`
+is passed to every position query when supplied, paired radii are in kilometres
+(currently supported by the Mars binding), and `perturbation_action` controls
+native perturbation updates. `nothing` leaves each legacy binding default alone.
+The verified time codes supported here are scale `1` (UTC), frame `0` (planet
+event time), and frame `1` (Earth receive time). The legacy default remains 1/1.
+
+For a Mars planetodetic/ellipsoidal reference, explicitly request
+`is_planetocentric=false`, both radii, `mars_mola_heights=false`, and the required
+epoch/frame, forcing and perturbation settings. Requested unavailable setters
+are errors. Applied setter arguments are not a claim of scientific equivalence
+to an independent reference or effective native read-back.
+
+Keyword construction retains a private resolved recipe for `deepcopy` and
+serialization. These reconstruct a fresh handle, not an advanced random stream
+or subsequent manual native mutations. Legacy positional forms have no known
+recipe and retain their prior limited reconstruction behavior. Treat the private
+recipe as read-only; no native cache or handle is shared by reconstructed models.
+"""
 function GRAMAtmosphereModel(;
     gram_directory::String="GRAM Suite 2.0",
     gram_data_directory::String="GRAM Suite 2.0",
@@ -553,6 +670,12 @@ function GRAMAtmosphereModel(;
     planet_name::String="earth",
     seed::Int=1001,
     initial_time=InitialTime(),
+    is_planetocentric::Union{Nothing, Bool}=nothing,
+    equatorial_radius_km::Union{Nothing, Real}=nothing,
+    polar_radius_km::Union{Nothing, Real}=nothing,
+    perturbation_action::Union{Nothing, Bool}=nothing,
+    start_time_scale::Integer=1,
+    start_time_frame::Integer=1,
     gram_min_relative_step_size::Union{Nothing, Real}=nothing,
     gram_perturbation_scales::Union{Nothing, Real, NTuple{4, Real}}=nothing,
     mars_map_year::Union{Nothing, Integer}=nothing,
@@ -563,8 +686,39 @@ function GRAMAtmosphereModel(;
     mars_mola_heights::Union{Nothing, Bool}=nothing,
     mars_min_max::Union{Nothing, Integer}=nothing
 )
+    start_time_scale == 1 || throw(ArgumentError(
+        "start_time_scale supports the verified UTC code 1 only; got $start_time_scale."
+    ))
+    start_time_frame in (0, 1) || throw(ArgumentError(
+        "start_time_frame must be 0 (planet event time) or 1 (Earth receive time); got $start_time_frame."
+    ))
+    (equatorial_radius_km === nothing) == (polar_radius_km === nothing) || throw(ArgumentError(
+        "equatorial_radius_km and polar_radius_km must be supplied together."
+    ))
+    radii = if equatorial_radius_km === nothing
+        nothing
+    else
+        a, b = Float64(equatorial_radius_km), Float64(polar_radius_km)
+        isfinite(a) && isfinite(b) && a >= b > 0 || throw(ArgumentError(
+            "Planetary radii must be finite positive kilometres with equatorial_radius_km >= polar_radius_km."
+        ))
+        (equatorial=a, polar=b)
+    end
+    if gram_static_grid_enabled() && _gram_static_grid_prebuild_all_planets_enabled()
+        throw(ArgumentError(
+            "SPACEAGORA_GRAM_STATIC_GRID_PREBUILD_ALL_PLANETS is no longer supported: " *
+            "static grids now belong to the actual model instance. Unset this option, " *
+            "construct the required models, then call " *
+            "precompute_gram_static_grids!([earth_model, mars_model, ...])."
+        ))
+    end
     it = _coerce_initial_time(initial_time)
     planet_key = lowercase(strip(planet_name))
+    radii === nothing || planet_key == "mars" || throw(ArgumentError(
+        "Explicit planetary radii are currently supported only for Mars by the available binding."
+    ))
+    reference_requested = is_planetocentric !== nothing || radii !== nothing ||
+        perturbation_action !== nothing || start_time_frame != 1
     gram_root = _resolve_gram_root(gram_root_directory, gram_directory)
 
     # Every native call below mutates GRAM's process-global state (dynamically
@@ -589,6 +743,12 @@ function GRAMAtmosphereModel(;
                 planet_name=planet_name,
                 seed=seed,
                 initial_time=it,
+                is_planetocentric=is_planetocentric,
+                equatorial_radius_km=equatorial_radius_km,
+                polar_radius_km=polar_radius_km,
+                perturbation_action=perturbation_action,
+                start_time_scale=start_time_scale,
+                start_time_frame=start_time_frame,
                 gram_min_relative_step_size=gram_min_relative_step_size,
                 gram_perturbation_scales=gram_perturbation_scales,
                 mars_map_year=mars_map_year,
@@ -601,13 +761,39 @@ function GRAMAtmosphereModel(;
             )
         end
 
-        if !isempty(gram_library_path)
-            gram.set_library!(resolve_path(gram_library_path))
+        # Fail before native setup when a requested setting has no binding entry.
+        for (requested, setter, option) in (
+            (reference_requested || seed != 1001, :set_seed!, "seed"),
+            (radii !== nothing, :set_planetary_radii!, "planetary radii in km"),
+            (perturbation_action !== nothing, :set_perturbation_action!, "perturbation_action"),
+            (is_planetocentric !== nothing, :set_position!, "is_planetocentric"),
+            (gram_min_relative_step_size !== nothing, :set_min_relative_step_size!, "gram_min_relative_step_size"),
+            (gram_perturbation_scales !== nothing, :set_perturbation_scales!, "gram_perturbation_scales"),
+        )
+            requested && _gram_required_setter(gram, setter, option)
+        end
+        if planet_key == "mars"
+            for (requested, setter, option) in (
+                (mars_map_year, :set_map_year!, "mars_map_year"),
+                (mars_mgcm_dust_levels, :set_mgcm_dust_levels!, "mars_mgcm_dust_levels"),
+                (mars_dust_storm, :set_dust_storm!, "mars_dust_storm"),
+                (mars_f107, :set_f107!, "mars_f107"),
+                (mars_wind_scales, :set_wind_scales!, "mars_wind_scales"),
+                (mars_mola_heights, :set_mola_heights!, "mars_mola_heights"),
+                (mars_min_max, :set_min_max!, "mars_min_max"),
+            )
+                requested === nothing || _gram_required_setter(gram, setter, option)
+            end
+        end
+
+        library_path = if !isempty(gram_library_path)
+            resolve_path(gram_library_path)
         else
             local_lib = _find_gram_library(gram_root)
             local_lib === nothing && throw(_gram_missing_library_error(gram_root))
-            gram.set_library!(local_lib)
+            local_lib
         end
+        gram.set_library!(library_path)
 
         spice_root = _resolve_spice_directory(gram_root, spice_directory, gram_data_directory)
         gram.initialize!(spice_root)
@@ -617,6 +803,27 @@ function GRAMAtmosphereModel(;
         data_path = _gram_data_path(gram_data_root, planet_key)
         gram_atmosphere = data_path === nothing ? gram.create_atmosphere(body) : gram.create_atmosphere(body; data_path=data_path)
 
+        _gram_require_setter_keywords(gram, :set_start_time!, gram_atmosphere,
+            (:year, :month, :day, :hour, :minute, :seconds, :scale, :frame), "start time")
+        is_planetocentric === nothing || _gram_require_setter_keywords(
+            gram, :set_position!, gram_atmosphere,
+            (:height, :latitude, :longitude, :elapsed_time, :is_planetocentric), "is_planetocentric")
+        radii === nothing || _gram_require_setter_keywords(
+            gram, :set_planetary_radii!, gram_atmosphere, (:equatorial, :polar), "planetary radii in km")
+        (reference_requested || seed != 1001) && _gram_require_setter_args(
+            gram, :set_seed!, (gram_atmosphere, seed), "seed")
+        perturbation_action === nothing || _gram_require_setter_args(
+            gram, :set_perturbation_action!, (gram_atmosphere, perturbation_action), "perturbation_action")
+        gram_perturbation_scales === nothing || _gram_require_setter_keywords(
+            gram, :set_perturbation_scales!, gram_atmosphere,
+            (:density_scale, :ew_wind_scale, :ns_wind_scale, :vertical_wind_scale), "gram_perturbation_scales")
+        if planet_key == "mars"
+            mars_map_year === nothing || _gram_require_setter_args(
+                gram, :set_map_year!, (gram_atmosphere, Int(mars_map_year)), "mars_map_year")
+            mars_mola_heights === nothing || _gram_require_setter_args(
+                gram, :set_mola_heights!, (gram_atmosphere, mars_mola_heights), "mars_mola_heights")
+        end
+
         gram.set_start_time!(
             gram_atmosphere;
             year=Int(it.year),
@@ -625,9 +832,12 @@ function GRAMAtmosphereModel(;
             hour=Int(it.hour),
             minute=Int(it.minute),
             seconds=Float64(it.second),
-            scale=1,
-            frame=1
+            scale=Int(start_time_scale),
+            frame=Int(start_time_frame)
         )
+
+        radii === nothing || gram.set_planetary_radii!(gram_atmosphere; radii...)
+        perturbation_action === nothing || gram.set_perturbation_action!(gram_atmosphere, perturbation_action)
 
         if isdefined(gram, :set_seed!)
             gram.set_seed!(gram_atmosphere, seed)
@@ -716,6 +926,29 @@ function GRAMAtmosphereModel(;
             mars_min_max=mars_min_max
         )
 
+        if reference_requested
+            offline_surrogate_supported = false
+            offline_surrogate_unsupported_reason = join(filter(!isempty,
+                [offline_surrogate_unsupported_reason, "explicit_native_reference_configuration"]), ",")
+        end
+
+        recipe = deepcopy(Dict{Symbol, Any}(
+            :gram_root_directory => gram_root, :gram_data_directory => gram_data_root,
+            :gram_library_path => library_path, :spice_directory => spice_root,
+            :planet_name => planet_key, :seed => seed, :initial_time => it,
+            :is_planetocentric => is_planetocentric,
+            :equatorial_radius_km => radii === nothing ? nothing : radii.equatorial,
+            :polar_radius_km => radii === nothing ? nothing : radii.polar,
+            :perturbation_action => perturbation_action,
+            :start_time_scale => Int(start_time_scale), :start_time_frame => Int(start_time_frame),
+            :gram_min_relative_step_size => gram_min_relative_step_size,
+            :gram_perturbation_scales => gram_perturbation_scales,
+            :mars_map_year => mars_map_year, :mars_mgcm_dust_levels => mars_mgcm_dust_levels,
+            :mars_dust_storm => mars_dust_storm, :mars_f107 => mars_f107,
+            :mars_wind_scales => mars_wind_scales, :mars_mola_heights => mars_mola_heights,
+            :mars_min_max => mars_min_max,
+        ))
+
         model = GRAMAtmosphereModel(
             gram,
             gram_atmosphere,
@@ -725,13 +958,11 @@ function GRAMAtmosphereModel(;
             planet_key,
             it,
             offline_surrogate_supported,
-            offline_surrogate_unsupported_reason
+            offline_surrogate_unsupported_reason,
+            _GRAMStaticGridCacheOwner(),
+            is_planetocentric,
+            recipe
         )
-
-        if gram_static_grid_enabled() && _gram_static_grid_prebuild_all_planets_enabled() && !_GRAM_STATIC_GRID_PREBUILD_IN_PROGRESS[]
-            wind_enabled = _parse_bool_env("SPACEAGORA_GRAM_STATIC_GRID_WIND", true)
-            precompute_gram_static_grids!(model; wind=wind_enabled)
-        end
 
         model
     end
@@ -930,11 +1161,17 @@ function _gram_load_offline_surrogate(file::String, planet::String)::GRAMOffline
     payload = open(file, "r") do io
         deserialize(io)
     end
+    return _gram_offline_surrogate_from_payload(payload, file, planet)
+end
+
+function _gram_offline_surrogate_from_payload(payload, file::String, planet::String; allow_full_grid::Bool=false)::GRAMOfflineSurrogate
     payload isa Dict || throw(ArgumentError("Expected Dict payload in '$file'."))
     dict = Dict{String, Any}(payload)
 
     get(dict, "status", "error") == "ok" || throw(ArgumentError("Payload status is not ok in '$file'."))
-    get(dict, "type", "") == "surrogate_trilinear" || throw(ArgumentError("Unsupported payload type in '$file'."))
+    payload_type = get(dict, "type", "")
+    (payload_type == "surrogate_trilinear" || (allow_full_grid && payload_type == "full_grid")) ||
+        throw(ArgumentError("Unsupported payload type in '$file'."))
 
     payload_planet = lowercase(strip(String(get(dict, "planet", ""))))
     payload_planet == planet || throw(ArgumentError("Payload planet '$payload_planet' does not match expected '$planet' in '$file'."))
@@ -1108,13 +1345,16 @@ function _gram_density_state_native(
 )::Tuple{Float64, Float64, SVector{3, Float64}}
     _gram_apply_user_ephemeris_state!(model, lat, lon, el_time)
     set_position! = Base.invokelatest(getfield, model.gram, Symbol("set_position!"))
+    position_options = model.is_planetocentric === nothing ? NamedTuple() :
+        (is_planetocentric=model.is_planetocentric,)
     Base.invokelatest(
         set_position!,
         model.gram_atmosphere;
         height=h * 1e-3,
         latitude=rad2deg(lat),
         longitude=rad2deg(lon),
-        elapsed_time=el_time
+        elapsed_time=el_time,
+        position_options...
     )
 
     update! = Base.invokelatest(getfield, model.gram, Symbol("update!"))
@@ -1226,20 +1466,56 @@ function _gram_static_grid_build(model::GRAMAtmosphereModel, key::GRAMStaticGrid
     return GRAMStaticGrid(key, alt_nodes, lat_nodes, lon_nodes, rho, T, wind_e, wind_n, wind_u)
 end
 
+@inline function _gram_static_grid_cache_key(key::GRAMStaticGridKey)
+    # Match the native branch: wind=false selects nominal winds; otherwise the
+    # resolved environment policy chooses nominal or perturbed values.
+    resolved_mode = _gram_wind_mode()
+    effective_mode = key.include_wind ? resolved_mode : :nominal
+    return (key, effective_mode)
+end
+
 function _gram_static_grid_get_or_build!(model::GRAMAtmosphereModel, wind::Bool; lock_obj=nothing)::GRAMStaticGrid
     key = _gram_static_grid_key(model, wind)
+    cache_key = _gram_static_grid_cache_key(key)
+    owner = getfield(model, :_static_grid_cache_owner)
     lock(_GRAM_STATIC_GRID_LOCK) do
-        if haskey(_GRAM_STATIC_GRID_CACHE, key)
-            return _GRAM_STATIC_GRID_CACHE[key]::GRAMStaticGrid
+        get!(_GRAM_STATIC_GRID_CACHE, owner, nothing)
+        entries = owner.entries
+        if haskey(entries, cache_key)
+            return entries[cache_key]::GRAMStaticGrid
         end
         grid = _gram_static_grid_build(model, key; lock_obj=lock_obj)
-        _GRAM_STATIC_GRID_CACHE[key] = grid
+        entries[cache_key] = grid
         return grid
     end
 end
 
+"""
+    clear_gram_static_grid_cache!(model::GRAMAtmosphereModel)
+
+Invalidate the runtime static grids owned by `model`, retaining other models'
+entries. Changes to the resolved `SPACEAGORA_GRAM_WIND_MODE` select distinct
+cache entries automatically. Call this after other native-state or sampling
+changes, including raw native setters, advanced random-generator state, or
+changed ephemeris inputs. Those changes are not detected automatically. Keep
+sampling configuration fixed during a grid build. The zero-argument method
+continues to clear every model's runtime grids. Dropping all references to a
+model also allows its cache entries to be reclaimed by garbage collection.
+"""
+function clear_gram_static_grid_cache!(model::GRAMAtmosphereModel)
+    owner = getfield(model, :_static_grid_cache_owner)
+    lock(_GRAM_STATIC_GRID_LOCK) do
+        empty!(owner.entries)
+        delete!(_GRAM_STATIC_GRID_CACHE, owner)
+    end
+    return nothing
+end
+
 function clear_gram_static_grid_cache!()
     lock(_GRAM_STATIC_GRID_LOCK) do
+        for owner in keys(_GRAM_STATIC_GRID_CACHE)
+            empty!(owner.entries)
+        end
         empty!(_GRAM_STATIC_GRID_CACHE)
         _GRAM_STATIC_GRID_LOGGED[] = false
     end
@@ -1270,38 +1546,64 @@ function _gram_model_for_planet(base_model::GRAMAtmosphereModel, planet::String)
     )
 end
 
+"""
+    precompute_gram_static_grids!(model; planets=nothing, wind=true, lock_obj=nothing)
+    precompute_gram_static_grids!(models::AbstractVector; wind=true, lock_obj=nothing)
+
+Warm the runtime grids of the actual model instance(s) that will be sampled.
+The single-model form defaults to that model's planet. Explicit `planets` or
+`SPACEAGORA_GRAM_STATIC_GRID_PLANETS` selections must name only that same planet;
+for multiple planets, pass a vector of already constructed models instead.
+Independent model instances do not share runtime static grids.
+"""
 function precompute_gram_static_grids!(
     base_model::GRAMAtmosphereModel;
     planets::Union{Nothing, AbstractVector{<:AbstractString}}=nothing,
     wind::Bool=true,
     lock_obj=nothing
 )
-    planet_list = planets === nothing ?
-        _gram_static_grid_planets_from_env() :
-        _gram_parse_static_grid_planets(join(planets, ","))
+    requested = planets === nothing ?
+        get(ENV, "SPACEAGORA_GRAM_STATIC_GRID_PLANETS", nothing) : join(planets, ",")
+    if requested !== nothing
+        planet_list = _gram_parse_static_grid_planets(requested)
+        model_planet = lowercase(strip(base_model.planet_name))
+        any(planet -> planet != model_planet, planet_list) &&
+            throw(ArgumentError(
+                "Single-model precomputation can warm only planet='$(base_model.planet_name)'. " *
+                "Construct the required models and call " *
+                "precompute_gram_static_grids!([earth_model, mars_model, ...]) instead."
+            ))
+    end
+    return precompute_gram_static_grids!([base_model]; wind=wind, lock_obj=lock_obj)
+end
 
+function precompute_gram_static_grids!(
+    models::AbstractVector{<:GRAMAtmosphereModel};
+    wind::Bool=true,
+    lock_obj=nothing
+)
+    isempty(models) && throw(ArgumentError("Provide at least one actual GRAM atmosphere model to precompute."))
     if _GRAM_STATIC_GRID_PREBUILD_IN_PROGRESS[]
         return nothing
     end
 
     _GRAM_STATIC_GRID_PREBUILD_IN_PROGRESS[] = true
     try
-        @info "Precomputing GRAM static grids." planets=planet_list
+        @info "Precomputing GRAM static grids for supplied model instances." planets=[model.planet_name for model in models]
         strict = _gram_static_grid_prebuild_strict()
         failed = String[]
-        for planet in planet_list
+        for model in models
             try
-                model = _gram_model_for_planet(base_model, planet)
                 _gram_static_grid_get_or_build!(model, wind; lock_obj=lock_obj)
             catch err
                 if strict
                     rethrow(err)
                 end
-                push!(failed, planet)
-                @warn "Skipping GRAM static-grid prebuild for planet." planet error=sprint(showerror, err)
+                push!(failed, model.planet_name)
+                @warn "Skipping GRAM static-grid prebuild for model." planet=model.planet_name error=sprint(showerror, err)
             end
         end
-        isempty(failed) || @warn "GRAM static-grid prebuild completed with skipped planets." skipped=failed
+        isempty(failed) || @warn "GRAM static-grid prebuild completed with skipped models." skipped=failed
     finally
         _GRAM_STATIC_GRID_PREBUILD_IN_PROGRESS[] = false
     end
@@ -1540,6 +1842,19 @@ function density_state(
     )
 end
 
+function _gram_reconstruction_recipe(model::GRAMAtmosphereModel)
+    model._constructor_kwargs === nothing || return deepcopy(model._constructor_kwargs)
+    # Raw positional models predate recipe ownership. Their other native
+    # settings are unknown and must not be inferred from the current handle.
+    return Dict{Symbol, Any}(
+        :gram_root_directory => model.gram_root,
+        :gram_data_directory => model.gram_data_root,
+        :spice_directory => model.spice_root,
+        :planet_name => model.planet_name,
+        :initial_time => model.initial_time,
+    )
+end
+
 function Base.deepcopy_internal(model::GRAMAtmosphereModel, stackdict::IdDict)
     if haskey(stackdict, model)
         return stackdict[model]
@@ -1547,11 +1862,7 @@ function Base.deepcopy_internal(model::GRAMAtmosphereModel, stackdict::IdDict)
 
     copied = Base.invokelatest(
         GRAMAtmosphereModel;
-        gram_root_directory=model.gram_root,
-        gram_data_directory=model.gram_data_root,
-        spice_directory=model.spice_root,
-        planet_name=model.planet_name,
-        initial_time=model.initial_time
+        _gram_reconstruction_recipe(model)...
     )
     stackdict[model] = copied
     return copied
@@ -1575,8 +1886,7 @@ end
 # Custom Serialization: GRAMAtmosphereModel wraps a live native library handle
 # (`gram`, a dynamically-loaded module) and an opaque `gram_atmosphere` C
 # handle -- neither is meaningful across a process boundary. Serialize only
-# the plain-data constructor arguments already stored on the struct (the same
-# fields `deepcopy_internal` above uses) and reconstruct a fresh, independent
+# a versioned plain-data construction recipe and reconstruct a fresh, independent
 # model via the ordinary keyword constructor -- now locked (see
 # `_with_gram_lock`/`_gram_default_lock`) -- on the receiving side. This lets
 # a `SimulationConfiguration` holding a GRAM density model be shipped through
@@ -1587,28 +1897,28 @@ end
 function Serialization.serialize(s::Serialization.AbstractSerializer, model::GRAMAtmosphereModel)
     Serialization.writetag(s.io, Serialization.OBJECT_TAG)
     Serialization.serialize(s, GRAMAtmosphereModel)
-    Serialization.serialize(s, model.gram_root)
-    Serialization.serialize(s, model.gram_data_root)
-    Serialization.serialize(s, model.spice_root)
-    Serialization.serialize(s, model.planet_name)
-    Serialization.serialize(s, model.initial_time)
+    Serialization.serialize(s, (:GRAMSuite_native_recipe_v1, _gram_reconstruction_recipe(model)))
     return nothing
 end
 
 function Serialization.deserialize(s::Serialization.AbstractSerializer, ::Type{GRAMAtmosphereModel})
-    gram_root = Serialization.deserialize(s)
-    gram_data_root = Serialization.deserialize(s)
-    spice_root = Serialization.deserialize(s)
-    planet_name = Serialization.deserialize(s)
-    initial_time = Serialization.deserialize(s)
-    return Base.invokelatest(
-        GRAMAtmosphereModel;
-        gram_root_directory=gram_root,
-        gram_data_directory=gram_data_root,
-        spice_directory=spice_root,
-        planet_name=planet_name,
-        initial_time=initial_time
-    )
+    payload = Serialization.deserialize(s)
+    recipe = if payload isa Tuple && length(payload) == 2 &&
+                payload[1] === :GRAMSuite_native_recipe_v1 && payload[2] isa Dict{Symbol, Any}
+        payload[2]
+    elseif payload isa String
+        # Read the old five-field stream with its original limited semantics.
+        Dict{Symbol, Any}(
+            :gram_root_directory => payload,
+            :gram_data_directory => Serialization.deserialize(s),
+            :spice_directory => Serialization.deserialize(s),
+            :planet_name => Serialization.deserialize(s),
+            :initial_time => Serialization.deserialize(s),
+        )
+    else
+        throw(ArgumentError("Unsupported serialized GRAM native model recipe. Use a compatible GRAMSuite version."))
+    end
+    return Base.invokelatest(GRAMAtmosphereModel; recipe...)
 end
 
 function Serialization.serialize(s::Serialization.AbstractSerializer, model::GRAMAtmosphereModelSurrogate)
@@ -1626,5 +1936,7 @@ function Serialization.deserialize(s::Serialization.AbstractSerializer, ::Type{G
     point_fallback_below_m = Serialization.deserialize(s)
     return GRAMAtmosphereModelSurrogate(base_model, surrogate_file, point_fallback_below_m)
 end
+
+include("grid_atmosphere.jl")
 
 end # module GRAMSuite
