@@ -1,0 +1,36 @@
+name: Native-free Julia tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-free-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-grid-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ["1.10", "1.12"]
+    env:
+      GIT_LFS_SKIP_SMUDGE: "1"
+      JULIA_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+          submodules: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/cache@v2
+      - name: Synthetic grids and native stand-ins
+        run: julia --startup-file=no --project=. -e 'using Pkg; Pkg.test()'
