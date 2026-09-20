@@ -27,6 +27,15 @@ Altitude/latitude coverage errors throw `DomainError`; longitude wraps periodica
 
 Run the repository's synthetic test suite with `julia --project -e 'using Pkg; Pkg.test()'` after dependencies are available. Tests use analytic grids and Julia stand-ins for native handles; they require neither GRAM assets nor a native library. Native construction and physical validation are separate from these tests.
 
+## Bounded terrain geometry
+
+`GRAMSuite.TerrainGeometry` provides native-free geometry queries using immutable
+terrain tiles and explicit padded domains. Inputs are snapshotted, stored axes
+and fields cannot be mutated, and editable copies require constructing a new
+validated tile. See the [geometry guide](docs/terrain_geometry.md) for coordinates,
+units, padding and domain limits. This component does not determine atmosphere
+validity or change the existing grid atmosphere workflow.
+
 ## Generate a new frozen grid
 
 The [recipe generation guide](docs/grid_generation.md) describes the separate advanced workflow for producing a frozen atmosphere with recorded settings and input checksums. The supplied Odyssey recipe reproduces an evaluated diagnostic configuration; it does not publish a preset or establish support for other planets and dates. Recipe validation and the generator tests run without native GRAM.

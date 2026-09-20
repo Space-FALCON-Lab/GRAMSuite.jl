@@ -1938,5 +1938,7 @@ function Serialization.deserialize(s::Serialization.AbstractSerializer, ::Type{G
 end
 
 include("grid_atmosphere.jl")
+include("terrain_geometry.jl")
+export TerrainGeometry
 
 end # module GRAMSuite

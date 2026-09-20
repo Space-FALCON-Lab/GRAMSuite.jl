@@ -6,6 +6,7 @@ const NATIVE_LIBRARIES_BEFORE = Set(Libdl.dllist())
 @test GRAMSuite._GRAM_WRAPPER[] === nothing
 include("grid_atmosphere_tests.jl")
 include("grid_contract_tests.jl")
+include("terrain_geometry_tests.jl")
 include("cache_regression.jl")
 include("constructor_recipe_tests.jl")
 include("mapyear_profile_tests.jl")
