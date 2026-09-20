@@ -317,3 +317,10 @@ The conventions those inputs are interpreted under matter at the kilometer level
 ## License
 
 This wrapper is released under the MIT License. NASA GRAM Suite 2.0 is subject to its own export-controlled distribution terms; refer to the documentation included with your GRAM distribution.
+
+## Horizontal wind diagnostics
+
+Compare fixed horizontal node grids with disjoint native-reference observations using the
+[standard-library Python validation tool](docs/horizontal_wind_validation.md).
+It reports spacing and explicit frame-treatment comparisons without loading native GRAM,
+changing runtime winds, or claiming application accuracy.
