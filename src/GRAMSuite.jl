@@ -1940,5 +1940,7 @@ end
 include("grid_atmosphere.jl")
 include("terrain_geometry.jl")
 export TerrainGeometry
+include("mars_wind_endpoints.jl")
+export MarsWindEndpoints
 
 end # module GRAMSuite
