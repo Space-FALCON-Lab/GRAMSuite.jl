@@ -336,8 +336,9 @@ contract and separately supplied sound-speed limit.
 The wrapper code is released under the MIT License (see [LICENSE](LICENSE)).
 Generated atmosphere grids distributed in this repository or its releases are
 licensed under CC BY 4.0 (see [DATA_LICENSE.md](DATA_LICENSE.md)). They are
-Mars-GRAM model output and contain no NASA software, libraries or model input
+GRAM Suite model output and contain no NASA software, libraries or model input
 data. Scenario asset archives keep the original terms of the NAIF SPICE kernels
-and gravity coefficients they redistribute. NASA GRAM Suite 2.0 is subject to
-its own export-controlled distribution terms; refer to the documentation
-included with your GRAM distribution.
+and gravity coefficients they redistribute. NASA GRAM Suite is distributed under its
+own terms; refer to the documentation included with your GRAM distribution.
+The [NASA Software Catalog](https://software.nasa.gov/software/MFS-33888-1)
+lists the suite as General Public Release.

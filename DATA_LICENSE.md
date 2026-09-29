@@ -14,7 +14,7 @@ This covers:
 
 **Attribution.** Cite the grid by name and version, or by its SHA256 (for
 example "Space-FALCON Lab, odyssey_p20_frozen_v1 version 1.0.0"), and credit
-NASA's GRAM Suite (Mars-GRAM) as the source model.
+NASA's GRAM Suite and the relevant planetary model (for example, Mars-GRAM).
 
 **Notice.** These grids are output of NASA's Global Reference Atmospheric Model
 (GRAM) Suite, run by the Space-FALCON Lab. They contain no GRAM software,
