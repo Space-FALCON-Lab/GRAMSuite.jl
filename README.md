@@ -323,14 +323,22 @@ The conventions those inputs are interpreted under matter at the kilometer level
   height is wrong under *either* setting — at 80° latitude it lands ~17.5 km below
   the intended point (~14× density).
 
-## License
-
-This wrapper is released under the MIT License. NASA GRAM Suite 2.0 is subject to its own export-controlled distribution terms; refer to the documentation included with your GRAM distribution.
-
-### Bounded frozen Mars wind endpoints
+## Bounded frozen Mars wind endpoints
 
 The native-free `MarsWindEndpoints` component evaluates supplied physical-height
 wind fields with immutable storage and explicit coverage checks. It is separate
 from the default atmosphere and includes no data. See the
 [endpoint guide](docs/mars_wind_endpoints.md) for its local domain, provenance
 contract and separately supplied sound-speed limit.
+
+## License
+
+The wrapper code is released under the MIT License (see [LICENSE](LICENSE)).
+Generated atmosphere grids distributed in this repository or its releases are
+licensed under CC BY 4.0 (see [DATA_LICENSE.md](DATA_LICENSE.md)). They are
+GRAM Suite model output and contain no NASA software, libraries or model input
+data. Scenario asset archives keep the original terms of the NAIF SPICE kernels
+and gravity coefficients they redistribute. NASA GRAM Suite is distributed under its
+own terms; refer to the documentation included with your GRAM distribution.
+The [NASA Software Catalog](https://software.nasa.gov/software/MFS-33888-1)
+lists the suite as General Public Release.
