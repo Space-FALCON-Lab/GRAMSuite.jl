@@ -197,13 +197,18 @@ function near_surface_state(m::NearSurfaceModel, lat_geodetic_deg::Real, lon_eas
     key = (band, cell, Int(L1))
     # A query on a native band or surface-cell edge belongs to both sides; Q_L is continuous there. The alternative is
     # the neighbour across the nearest edge: below it when the query is on or just above the edge, above it when the
-    # query is just below.
+    # query is just below. At a corner, try the diagonal after the two orthogonal neighbours.
     if !haskey(m.q, key)
         alts = NTuple{3,Int}[]
         eb = round(Int, phic / 7.5)
-        abs(phic / 7.5 - eb) < 1e-9 && push!(alts, (band == eb ? eb - 1 : eb, cell, Int(L1)))
         ec = round(Int, lam / 9.0)
-        abs(lam / 9.0 - ec) < 1e-9 && push!(alts, (band, mod(floor(Int, lam / 9.0) == ec ? ec - 1 : ec, 40), Int(L1)))
+        on_band_edge = abs(phic / 7.5 - eb) < 1e-9
+        on_cell_edge = abs(lam / 9.0 - ec) < 1e-9
+        alternate_band = band == eb ? eb - 1 : eb
+        alternate_cell = mod(floor(Int, lam / 9.0) == ec ? ec - 1 : ec, 40)
+        on_band_edge && push!(alts, (alternate_band, cell, Int(L1)))
+        on_cell_edge && push!(alts, (band, alternate_cell, Int(L1)))
+        on_band_edge && on_cell_edge && push!(alts, (alternate_band, alternate_cell, Int(L1)))
         k2 = findfirst(k -> haskey(m.q, k), alts)
         k2 === nothing && throw(DomainError((phic, lam, L1), "Surface-layer coefficient unavailable here"))
         key = alts[k2]
