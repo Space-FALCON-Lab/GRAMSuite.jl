@@ -168,6 +168,61 @@ end
     @test near_surface_state(mc, g, lam, h).surface_layer_model_status == "across the edge"
 end
 
+@testset "Surface-layer grid corners include the diagonal cell" begin
+    function corner_model(keys)
+        model_of(synthetic_payload(edit! = function (d)
+            fill!(d["terrain"]["surface_height_km"], 0.5)
+            qm = d["q_models"]
+            keep = findall(i -> (qm["band"][i], qm["cell"][i], qm["L"][i]) in keys, eachindex(qm["band"]))
+            qm["status"] = [string((b, c, L)) for (b, c, L) in zip(qm["band"], qm["cell"], qm["L"])]
+            for key in ("band", "cell", "L", "order", "phic_center", "lam_center", "n_points", "status")
+                qm[key] = qm[key][keep]
+            end
+            qm["coef"] = qm["coef"][keep, :]
+            # Nonconstant Q also checks that the selected cell's coordinates are used.
+            qm["coef"][:, 2] .= 0.2
+            qm["coef"][:, 4] .= 0.3
+        end))
+    end
+    # Exact corners, both hemispheres, equivalent seam longitudes and all four approach directions.
+    points = [(0.0, 0.0), (7.5, 99.0), (-7.5, 81.0), (0.0, 360.0), (0.0, -360.0)]
+    append!(points, [(a * 1e-12, b * 1e-12) for a in (-1, 1) for b in (-1, 1)])
+    for (phic, lon) in points, clearance in (0.015, 0.2)
+        @testset "corner $phic, $lon at $clearance km clearance" begin
+            query = geodetic_query(M, phic, lon, 0.5 + clearance)
+            actual_phic = NS.radial_position(M.core.a_km, M.core.b_km, query[1], query[3] / 1000)[2]
+            # Choose the opposite member of each explicit pair of incident cells.
+            eb, ec = round(Int, phic / 7.5), round(Int, mod(lon, 360.0) / 9.0)
+            b = actual_phic < 7.5eb ? eb : eb - 1
+            c = mod(mod(lon, 360.0) < 9.0ec ? ec : ec - 1, 40)
+            key = (b, c, 1)
+            m = corner_model([key])
+            s = near_surface_state(m, query...)
+            @test s.surface_layer_model_status == string(key)
+            @test s.regime == (clearance < 0.03 ? :D5 : :D4)
+            x = (actual_phic - (7.5b + 3.75)) / 3.75
+            y = (mod(lon - (9.0c + 4.5) + 180.0, 360.0) - 180.0) / 4.5
+            q = Q + 0.2x + 0.3y
+            p = exp(lnplev(1.0)) * exp((1.0 - s.areoid_height_km) * q / (Tlev(1.0) + T5))
+            @test s.pressure_Pa ≈ p rtol = 1e-12
+            @test s.density_kgm3 ≈ p / (R_GAS * s.temperature_K) rtol = 1e-12
+        end
+    end
+    # Existing primary, latitude-neighbour and longitude-neighbour precedence is preserved.
+    keys = [(0, 0, 1), (-1, 0, 1), (0, 39, 1), (-1, 39, 1)]
+    for first in eachindex(keys)
+        m = corner_model(keys[first:end])
+        @test near_surface_state(m, geodetic_query(m, 0.0, 0.0, 0.7)...).surface_layer_model_status == string(keys[first])
+    end
+    m = corner_model([last(keys)])
+    for (phic, lon) in ((1e-6, 0.0), (0.0, 1e-6), (1e-6, 1e-6))
+        @test occursin("coefficient unavailable", refusal_message(() -> near_surface_state(m, geodetic_query(m, phic, lon, 0.7)...)))
+    end
+    empty = corner_model(NTuple{3,Int}[])
+    @test occursin("coefficient unavailable", refusal_message(() -> near_surface_state(empty, geodetic_query(empty, 0.0, 0.0, 0.7)...)))
+    @test near_surface_state(empty, geodetic_query(empty, 0.0, 0.0, 2.5)...).regime == :D3
+end
+
 @testset "Fixed-grid calling convention" begin
     g, _, h = geodetic_query(M, 10.3, 40.7, 2.5)
     s = near_surface_state(M, g, 40.7, h)
