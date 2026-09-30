@@ -39,10 +39,45 @@ end
 _payload_error(message) = throw(ArgumentError(message))
 _finite_real(x) = x isa Real && !(x isa Bool) && isfinite(x)
 
+# Bilinear terrain is continuous, so all heights between its extrema can generate L1 values,
+# including integer levels that no terrain node uses. Clip latitude before finding the extrema
+# so terrain outside the advertised support does not require unused levels.
+function _validate_first_levels(levels, zs, t, s)
+    limit = min(180.0, Float64(s["phic_max_deg"]) + 1e-9)
+    limit < 0 && return
+    lat0, step = Float64(t["lat0_deg"]), Float64(t["step_deg"])
+    lo, hi = Inf, -Inf
+    for lat in (-limit, limit)
+        u = (lat - lat0) / step
+        i = clamp(floor(Int, u), 0, size(zs, 1) - 2); f = u - i
+        for j in axes(zs, 2)
+            z = (1 - f) * zs[i+1, j] + f * zs[i+2, j]
+            lo, hi = min(lo, z), max(hi, z)
+        end
+    end
+    for i in axes(zs, 1)
+        -limit <= lat0 + (i - 1) * step <= limit || continue
+        for j in axes(zs, 2)
+            lo, hi = min(lo, zs[i, j]), max(hi, zs[i, j])
+        end
+    end
+    # Allow for interpolation roundoff at an integer transition, then apply the strict volcano
+    # exclusion. A height at the refusal limit itself cannot produce a supported query.
+    padding = 16 * eps(max(abs(lo), abs(hi), 1.0))
+    lo -= padding
+    hi = min(hi + padding, prevfloat(Float64(s["zs_refuse_km"])))
+    lo > hi && return
+    first_L1, last_L1 = max(floor(lo + 0.3) + 1, -5.0), max(floor(hi + 0.3) + 1, -5.0)
+    count(z -> first_L1 <= z <= last_L1 && isinteger(z), levels) == last_L1 - first_L1 + 1 ||
+        _payload_error("levels_km must contain every terrain-derived first level from $first_L1 through $last_L1 km exactly.")
+end
+
 """
     NearSurfaceModel(payload::AbstractDict, source_sha256::AbstractString)
 
 Validate a deserialized `spaceagora_mars_near_surface_scalars_v1` payload and build the evaluator's immutable view.
+Component fields may contain finite values or NaN sentinels, but not infinities. The level axis must
+contain every supported terrain-derived first level, and cover the advertised top altitude.
 The arrays are used as stored; treat them as read-only.
 """
 function NearSurfaceModel(d::AbstractDict, digest::AbstractString)
@@ -67,10 +102,12 @@ function NearSurfaceModel(d::AbstractDict, digest::AbstractString)
     for key in ("level_T_K", "level_R", "level_lnp")
         a = d[key]
         a isa Array{Float64,3} && size(a) == (length(levels), nlat, nlon) || _payload_error("$key must be a Float64 array of size (levels, nlat, nlon).")
+        all(x -> !isinf(x), a) || _payload_error("$key must contain finite values or NaN sentinels.")
     end
     for key in ("surface_T30_K", "surface_T5_K")
         a = d[key]
         a isa Matrix{Float64} && size(a) == (nlat, nlon) || _payload_error("$key must be a Float64 matrix of size (nlat, nlon).")
+        all(x -> !isinf(x), a) || _payload_error("$key must contain finite values or NaN sentinels.")
     end
     n = length(qm["band"])
     all(length(qm[k]) == n for k in ("cell", "L", "order", "phic_center", "lam_center")) && size(qm["coef"]) == (n, 6) ||
@@ -80,6 +117,8 @@ function NearSurfaceModel(d::AbstractDict, digest::AbstractString)
     length(radii) == 2 && all(_finite_real, radii) && 0 < radii[2] <= radii[1] || _payload_error("radii_km must be finite, with 0 < polar <= equatorial.")
     all(_finite_real, (s["zs_refuse_km"], s["phic_max_deg"], s["min_clearance_km"], s["top_areoid_km"])) ||
         _payload_error("Support limits must be finite.")
+    s["top_areoid_km"] <= last(levels) || _payload_error("top_areoid_km must not exceed the final stored level.")
+    _validate_first_levels(levels, zs, t, s)
     q = Dict{NTuple{3,Int},NTuple{9,Float64}}(); qs = Dict{NTuple{3,Int},String}()
     for n in eachindex(qm["band"])
         key = (qm["band"][n], qm["cell"][n], qm["L"][n])

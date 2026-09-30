@@ -209,4 +209,73 @@ end
     notdict = tempname(); open(io -> serialize(io, [1, 2, 3]), notdict, "w")
     @test_throws ArgumentError GRAMNearSurfaceAtmosphereModel(surrogate_file = notdict)
 end
+
+# Keep the stored fields aligned while changing the vertical coverage.
+function retain_levels!(d, levels)
+    indices = [findfirst(==(z), d["levels_km"]) for z in levels]
+    d["levels_km"] = d["levels_km"][indices]
+    for key in ("level_T_K", "level_R", "level_lnp", "level_source")
+        d[key] = d[key][indices, :, :]
+    end
+    return d
+end
+flat_payload() = synthetic_payload(edit! = d -> fill!(d["terrain"]["surface_height_km"], 0.5))
+
+@testset "Near-surface payload validation regressions" begin
+    @testset "Reject infinities while preserving NaN sentinels" begin
+        for key in ("level_T_K", "level_R", "level_lnp", "surface_T30_K", "surface_T5_K")
+            for value in (Inf, -Inf)
+                d = synthetic_payload()
+                d[key][1] = value
+                @test_throws ArgumentError model_of(d)
+            end
+            d = synthetic_payload()
+            if ndims(d[key]) == 3
+                d[key][findfirst(==(1.0), d["levels_km"]), 13, 7] = NaN
+            else
+                d[key][13, 7] = NaN
+            end
+            m = model_of(d)
+            @test m isa GRAMNearSurfaceAtmosphereModel
+            q = geodetic_query(m, 1.0, 44.0, surface_z(m, 1.0, 44.0) + 0.2)
+            @test_throws DomainError near_surface_state(m, q...)
+            @test near_surface_state(m, geodetic_query(m, 1.0, 44.0, 5.5)...).regime == :D3
+        end
+    end
+
+    @testset "Every supported first exposed level is stored exactly" begin
+        @test_throws ArgumentError model_of(retain_levels!(flat_payload(), [0.0, 2.0, 5.0, 75.0]))
+        # A near match must not be accepted in place of the actual L1.
+        d = flat_payload(); d["levels_km"][findfirst(==(1.0), d["levels_km"])] = nextfloat(1.0)
+        @test_throws ArgumentError model_of(d)
+        # No terrain node selects L1=2, but interpolation between nodes does.
+        d = flat_payload(); d["terrain"]["surface_height_km"][:, 2:end] .= 3.5
+        retain_levels!(d, [1.0, 3.0, 4.0, 5.0, 75.0])
+        @test_throws ArgumentError model_of(d)
+        # Sparse higher levels remain valid when the terrain only needs L1=1.
+        m = model_of(retain_levels!(flat_payload(), [1.0, 3.0, 5.0, 75.0]))
+        @test near_surface_state(m, geodetic_query(m, 10.3, 40.7, 0.7)...).first_level_km == 1.0
+        # Unsupported polar heights and volcano heights do not enlarge coverage.
+        d = flat_payload(); d["support"]["phic_max_deg"] = 75.0
+        d["terrain"]["surface_height_km"][[1, end], :] .= 8.0
+        @test model_of(retain_levels!(d, [1.0, 3.0, 75.0])) isa GRAMNearSurfaceAtmosphereModel
+        d = synthetic_payload(); d["support"]["zs_refuse_km"] = 8.7
+        retain_levels!(d, filter(!=(10.0), d["levels_km"]))
+        @test model_of(d) isa GRAMNearSurfaceAtmosphereModel
+        # Deep terrain is clamped to the native -5 km first level.
+        d = flat_payload(); fill!(d["terrain"]["surface_height_km"], -8.0)
+        @test model_of(retain_levels!(d, [-5.0, 1.0, 75.0])) isa GRAMNearSurfaceAtmosphereModel
+        @test_throws ArgumentError model_of(retain_levels!(d, [1.0, 75.0]))
+    end
+
+    @testset "Advertised top stays within stored levels" begin
+        d = synthetic_payload(); d["support"]["top_areoid_km"] = 76.0
+        @test_throws ArgumentError model_of(d)
+        d["support"]["top_areoid_km"] = 50.0
+        m = model_of(d)
+        @test near_surface_state(m, geodetic_query(m, 10.3, 40.7, 50.0)...).temperature_K ≈ Tlev(50.0)
+        @test_throws DomainError near_surface_state(m, geodetic_query(m, 10.3, 40.7, 50.5)...)
+        @test near_surface_state(M, geodetic_query(M, 10.3, 40.7, 75.0)...).temperature_K ≈ Tlev(75.0)
+    end
+end
 end
