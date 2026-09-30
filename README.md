@@ -27,6 +27,10 @@ Altitude/latitude coverage errors throw `DomainError`; longitude wraps periodica
 
 Run the repository's synthetic test suite with `julia --project -e 'using Pkg; Pkg.test()'` after dependencies are available. Tests use analytic grids and Julia stand-ins for native handles; they require neither GRAM assets nor a native library. Native construction and physical validation are separate from these tests.
 
+## Native-free near-surface Mars atmosphere
+
+`GRAMNearSurfaceAtmosphereModel` evaluates a frozen Mars-GRAM lower atmosphere from 5 m above the local terrain to 75 km areoid height, following native Mars-GRAM's own near-surface rule. It returns density, temperature and pressure; winds are not provided. Load a trusted, explicitly supplied payload and query it by geodetic latitude, east longitude and ellipsoid height. Outside its supported domain it throws `DomainError` naming the reason. See the [near-surface guide](docs/near_surface_atmosphere.md); the published payload's terms, including its terrain component, are in [DATA_LICENSE.md](DATA_LICENSE.md).
+
 ## Bounded terrain geometry
 
 `GRAMSuite.TerrainGeometry` provides native-free geometry queries using immutable
