@@ -346,3 +346,10 @@ and gravity coefficients they redistribute. NASA GRAM Suite is distributed under
 own terms; refer to the documentation included with your GRAM distribution.
 The [NASA Software Catalog](https://software.nasa.gov/software/MFS-33888-1)
 lists the suite as General Public Release.
+
+## Horizontal wind diagnostics
+
+Compare fixed horizontal node grids with disjoint native-reference observations using the
+[standard-library Python validation tool](docs/horizontal_wind_validation.md).
+It reports spacing and explicit frame-treatment comparisons without loading native GRAM,
+changing runtime winds, or claiming application accuracy.

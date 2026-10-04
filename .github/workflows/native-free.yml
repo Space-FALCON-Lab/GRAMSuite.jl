@@ -38,3 +38,14 @@ jobs:
         run: |
           julia --startup-file=no test/generator_builder_tests.jl
           julia --startup-file=no test/generation_recipe_tests.jl
+
+  offline-wind-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+          submodules: false
+      - name: Horizontal wind diagnostic with synthetic observations
+        run: python3 test/horizontal_wind_tests.py
