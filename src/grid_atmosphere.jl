@@ -211,11 +211,19 @@ function density_state(
     all(isfinite, (altitude, latitude, longitude, elapsed)) || throw(DomainError((h, lat, lon, el_time), "Grid atmosphere query coordinates and elapsed time must be finite."))
     grid = model.surrogate
     _gram_axis_segment_checked(grid.lat_nodes_rad, latitude) === nothing &&
-        throw(DomainError(lat, "Latitude is outside the stored GRAM grid: $(first(grid.lat_nodes_rad)) to $(last(grid.lat_nodes_rad)) radians."))
+        throw(DomainError(lat, "Latitude $(rad2deg(latitude)) degrees is outside the stored GRAM grid: " *
+            "$(rad2deg(first(grid.lat_nodes_rad))) to $(rad2deg(last(grid.lat_nodes_rad))) degrees " *
+            "($(first(grid.lat_nodes_rad)) to $(last(grid.lat_nodes_rad)) radians). Native fallback is disabled."))
     state = _gram_offline_surrogate_eval(grid, altitude, latitude, longitude)
     state === nothing || return state
-    if model.above_grid === :vacuum && altitude > last(grid.alt_nodes_m)
+    floor_m, ceiling_m = first(grid.alt_nodes_m), last(grid.alt_nodes_m)
+    if model.above_grid === :vacuum && altitude > ceiling_m
         return 0.0, model.vacuum_temperature, SVector{3, Float64}(0.0, 0.0, 0.0)
     end
-    throw(DomainError(h, "Altitude is outside the stored GRAM grid: $(first(grid.alt_nodes_m)) to $(last(grid.alt_nodes_m)) metres. Native fallback is disabled; an above-grid vacuum policy must be selected explicitly."))
+    altitude < floor_m && throw(DomainError(h, "Altitude $(altitude) metres is below the stored GRAM grid floor " *
+        "of $(floor_m) metres (grid $(floor_m) to $(ceiling_m) metres). Queries below the grid are not supported, " *
+        "and native fallback is disabled."))
+    throw(DomainError(h, "Altitude $(altitude) metres is above the stored GRAM grid ceiling of $(ceiling_m) metres " *
+        "(grid $(floor_m) to $(ceiling_m) metres). Native fallback is disabled. Where the model is constructed " *
+        "directly, above_grid=:vacuum selects zero density above the ceiling."))
 end

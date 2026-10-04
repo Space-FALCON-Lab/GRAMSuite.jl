@@ -27,6 +27,19 @@ Altitude/latitude coverage errors throw `DomainError`; longitude wraps periodica
 
 Run the repository's synthetic test suite with `julia --project -e 'using Pkg; Pkg.test()'` after dependencies are available. Tests use analytic grids and Julia stand-ins for native handles; they require neither GRAM assets nor a native library. Native construction and physical validation are separate from these tests.
 
+## Native-free near-surface Mars atmosphere
+
+`GRAMNearSurfaceAtmosphereModel` evaluates a frozen Mars-GRAM lower atmosphere from 5 m above the local terrain to its payload's areoid-height top (75 km in version 1.0.0 of the published preset, 81 km in version 1.1.0), following native Mars-GRAM's own near-surface rule. It returns density, temperature and pressure; winds are not provided. Load a trusted, explicitly supplied payload and query it by geodetic latitude, east longitude and ellipsoid height. Outside its supported domain it throws `DomainError` naming the reason. See the [near-surface guide](docs/near_surface_atmosphere.md); the published payload's terms, including its terrain component, are in [DATA_LICENSE.md](DATA_LICENSE.md).
+
+## Bounded terrain geometry
+
+`GRAMSuite.TerrainGeometry` provides native-free geometry queries using immutable
+terrain tiles and explicit padded domains. Inputs are snapshotted, stored axes
+and fields cannot be mutated, and editable copies require constructing a new
+validated tile. See the [geometry guide](docs/terrain_geometry.md) for coordinates,
+units, padding and domain limits. This component does not determine atmosphere
+validity or change the existing grid atmosphere workflow.
+
 ## Generate a new frozen grid
 
 The [recipe generation guide](docs/grid_generation.md) describes the separate advanced workflow for producing a frozen atmosphere with recorded settings and input checksums. The supplied Odyssey recipe reproduces an evaluated diagnostic configuration; it does not publish a preset or establish support for other planets and dates. Recipe validation and the generator tests run without native GRAM.
@@ -314,9 +327,25 @@ The conventions those inputs are interpreted under matter at the kilometer level
   height is wrong under *either* setting — at 80° latitude it lands ~17.5 km below
   the intended point (~14× density).
 
+## Bounded frozen Mars wind endpoints
+
+The native-free `MarsWindEndpoints` component evaluates supplied physical-height
+wind fields with immutable storage and explicit coverage checks. It is separate
+from the default atmosphere and includes no data. See the
+[endpoint guide](docs/mars_wind_endpoints.md) for its local domain, provenance
+contract and separately supplied sound-speed limit.
+
 ## License
 
-This wrapper is released under the MIT License. NASA GRAM Suite 2.0 is subject to its own export-controlled distribution terms; refer to the documentation included with your GRAM distribution.
+The wrapper code is released under the MIT License (see [LICENSE](LICENSE)).
+Generated atmosphere grids distributed in this repository or its releases are
+licensed under CC BY 4.0 (see [DATA_LICENSE.md](DATA_LICENSE.md)). They are
+GRAM Suite model output and contain no NASA software, libraries or model input
+data. Scenario asset archives keep the original terms of the NAIF SPICE kernels
+and gravity coefficients they redistribute. NASA GRAM Suite is distributed under its
+own terms; refer to the documentation included with your GRAM distribution.
+The [NASA Software Catalog](https://software.nasa.gov/software/MFS-33888-1)
+lists the suite as General Public Release.
 
 ## Horizontal wind diagnostics
 

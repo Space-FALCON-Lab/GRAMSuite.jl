@@ -166,6 +166,19 @@ end
                 check_state(GridAPI.density_state(model, 500.0, deg2rad(70.0) + 5e-13, 0.0), analytic_fields(500.0, 70.0, 0.0))
                 @test_throws DomainError GridAPI.density_state(model, 1000.0 + 1e-8, 0.0, 0.0)
                 @test_throws DomainError GridAPI.density_state(model, -1e-8, 0.0, 0.0)
+                # Messages say which boundary was crossed, and only suggest the vacuum policy above the grid.
+                domain_message(f) = try
+                    f()
+                    ""
+                catch err
+                    err isa DomainError ? err.msg : rethrow()
+                end
+                below = domain_message(() -> GridAPI.density_state(model, -1.0, 0.0, 0.0))
+                above = domain_message(() -> GridAPI.density_state(model, 1001.0, 0.0, 0.0))
+                outside_latitude = domain_message(() -> GridAPI.density_state(model, 500.0, deg2rad(70.1), 0.0))
+                @test occursin("below the stored GRAM grid floor", below) && !occursin("above_grid", below)
+                @test occursin("above the stored GRAM grid ceiling", above) && occursin("above_grid=:vacuum", above)
+                @test occursin("degrees is outside the stored GRAM grid", outside_latitude) && occursin("radians", outside_latitude)
 
                 vacuum = GridAPI.GRAMGridAtmosphereModel(;
                     planet="mars", surrogate_file=source, above_grid=:vacuum, vacuum_temperature=175,
