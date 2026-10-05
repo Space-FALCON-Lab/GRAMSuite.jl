@@ -17,8 +17,8 @@ The query's planetocentric latitude, east longitude, areoid height z and surface
   - The surface east wind is split at the 0 E seam.
   - Terms with zero weight are skipped, so an unavailable node that the query does not need never contaminates it.
 - **Slope and vertical terms:** native's slope-wind term (`MarsWindEndpoints.slope_wind`, unchanged) adds them to the
-  background. The terrain slopes come from ±0.25 degree differences of the published terrain, as the fields were
-  generated.
+  background. The terrain slopes are the accepted query rule's: ±0.25 degree differences of the payload's published
+  terrain. The generation used slopes on native-shaped terrain; this query rule is the one validated against native.
 
 **Sound speed.** c = sqrt(γ P / ρ), with γ from a reference K(T, P) (K = γ / (γ - 1)) on native's 50 K and pressure-decade
 cells plus the stored offset δ.
@@ -43,6 +43,7 @@ const ARRAY_KEYS = MarsNearSurfaceScalars.WIND_ARRAY_KEYS
 const CLIP_FRACTION = 0.7
 const SWITCH_KM = 80.0
 const SWITCH_BAND_KM = 1e-9
+const CLEARANCE_TOLERANCE_KM = 1e-9                                   # the scalar evaluator's accepted outer-domain tolerance
 # The sound-speed reference and its water and composition rules (the accepted W0 composition revision, version 1.1).
 const TK = [50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 350.0]            # temperature levels, K
 const PK = [1e-2, 1e-1, 1.0, 10.0, 100.0, 1000.0, 1e4, 1e5]            # pressure levels, Pa
@@ -117,6 +118,13 @@ function WindLayer(d::AbstractDict, s::MarsNearSurfaceScalars.NearSurfaceModel)
         length(lat) >= 2 && all(isfinite, lat) && issorted(lat) || _payload_error("wind_meta $name must be finite and sorted.")
     end
     issorted(mt; lt = <=) && issorted(vlat; lt = <=) || _payload_error("MTGCM rows and north-wind knots must be strictly increasing.")
+    # the wind rule's own limits: clearance endpoints at 5 m and 30 m, the top within the MTGCM bracket, and every
+    # supported latitude inside every axis
+    s.min_clearance_km == 0.005 || _payload_error("The wind rule needs a 5 m minimum clearance (support min_clearance_km 0.005).")
+    80.0 + ho < s.top_km <= 85.0 + ho || _payload_error("The wind rule needs the top within the MTGCM levels (80 + ho_km, 85 + ho_km].")
+    φmax = s.phic_max_deg + 1e-9
+    all(ax -> first(ax) <= -φmax && last(ax) >= φmax, (ulat, vlat, slat, mt)) ||
+        _payload_error("Every wind and sound-speed latitude axis must cover the supported latitudes.")
     sides = Vector{Int}(usides)
     for i in eachindex(ulat)
         sides[i] in (-1, 0, 1) || _payload_error("East-wind knot sides must be -1, 0 or 1.")
@@ -211,10 +219,12 @@ _name(L::WindLayer, e::Endpoint) = e.kind == :surface ? (e.index == 1 ? "5 m cle
 
 """
 Regime, endpoints and height weight at areoid height z over surface height zs (km). The scalar evaluator has already
-refused positions outside the product; at its tolerances (clearance down to 5 m - 1e-9 km) the D5 weight is clamped to 0.
+refused positions outside the product. Within its accepted clearance tolerance (down to 5 m - 1e-9 km) the D5 weight
+is clamped to 0, and only there; within the top's tolerance the D1 weight needs no clamp (its bracket reaches 85 + ho).
 """
 function regime(L::WindLayer, z, zs)
     Δ = z - zs; L1 = max(floor(zs + 0.3) + 1, -5.0)
+    Δ >= 0.005 - CLEARANCE_TOLERANCE_KM || throw(DomainError(Δ, "Below 5 m above the surface is not supported"))
     Δ <= 0.030 && return (regime = :D5, lo = Endpoint(:surface, 1), hi = Endpoint(:surface, 2), w = max((Δ - 0.005) / 0.025, 0.0))
     if z < L1
         k = findfirst(==(L1), L.levels)
@@ -348,10 +358,13 @@ function winds(L::WindLayer, S::MarsNearSurfaceScalars.NearSurfaceModel, st, lon
     Uc, Vc = clamp(U, -0.7c, 0.7c), clamp(V, -0.7c, 0.7c)
     (wind_east_ms = Uc, wind_north_ms = Vc, wind_up_ms = W, unclipped_wind_east_ms = U, unclipped_wind_north_ms = V,
      sound_speed_ms = c, wind_clipped = Uc != U || Vc != V, wind_regime = g.regime,
-     composition_side = z <= SWITCH_KM ? :dry : :switched, in_switch_band = abs(z - SWITCH_KM) <= SWITCH_BAND_KM)
+     composition_side = z <= SWITCH_KM ? :dry : :switched, in_switch_band = in_switch_band(z))
 end
 
-"East and north terrain slopes (uncapped), from ±0.25 degree differences of the published terrain."
+"Whether areoid height z (km) lies within `SWITCH_BAND_KM` of the composition switch, by this evaluator's own height."
+in_switch_band(z) = abs(z - SWITCH_KM) <= SWITCH_BAND_KM
+
+"East and north terrain slopes (uncapped), from ±0.25 degree differences of the published terrain (the query rule)."
 function slopes(S::MarsNearSurfaceScalars.NearSurfaceModel, φ, l)
     zsf(p, q) = MarsNearSurfaceScalars.terrain(S, S.zs, p, mod(q, 360.0))
     R = 1000MarsNearSurfaceScalars.terrain(S, S.ra, φ, mod(l, 360.0))

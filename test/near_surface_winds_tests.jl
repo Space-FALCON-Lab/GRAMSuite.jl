@@ -22,11 +22,11 @@ lnplev(z) = log(700.0) - z / 11.0
 const R_GAS, T30, T5, Q, OFF = 192.0, 214.0, 216.0, 20.0, 12.0
 jump(φ, side) = (φ > 78.75 || (φ == 78.75 && side > 0) ? 3.0 : 0.0) + (φ > 82.5 || (φ == 82.5 && side > 0) ? 2.0 : 0.0)
 jumpq(φ) = (φ >= 78.75 ? 3.0 : 0.0) + (φ >= 82.5 ? 2.0 : 0.0)           # a query exactly on a jump takes the upper side
-const ULAT, USIDE = let ks = collect(-85.0:5.0:85.0), sd = zeros(Int, 35)
+const ULAT, USIDE = let ks = collect(-90.0:5.0:90.0), sd = zeros(Int, 37)
     append!(ks, [78.75, 78.75, 82.5, 82.5]); append!(sd, [-1, 1, -1, 1])
     o = sortperm(collect(zip(ks, sd))); ks[o], sd[o]
 end
-const VLAT, MT = collect(-85.0:5.0:85.0), collect(-87.5:5.0:87.5)
+const VLAT, MT = collect(-90.0:5.0:90.0), collect(-87.5:5.0:87.5)
 fU(k, φ) = 10.0 + 0.5k + 0.1φ                  # lower-table east wind at level index k, before jumps
 fV(k, φ) = -5.0 + 0.2k - 0.05φ
 fMU(m, φ) = 30.0 + 5m + 0.1φ; fMV(m, φ) = -10.0 + m - 0.05φ
@@ -208,6 +208,15 @@ end
     w = query(M, phic, lam, 80.0)
     @test w.in_switch_band && abs(w.areoid_height_km - 80.0) <= 1e-9
     @test w.composition_side == (w.areoid_height_km <= 80.0 ? :dry : :switched)
+    # band membership by the evaluator's own height, both edges pinned to the last double inside
+    for sgn in (1, -1)
+        z = 80.0 + sgn * 1e-9
+        while !NW.in_switch_band(z); z = sgn > 0 ? prevfloat(z) : nextfloat(z); end
+        while NW.in_switch_band(sgn > 0 ? nextfloat(z) : prevfloat(z)); z = sgn > 0 ? nextfloat(z) : prevfloat(z); end
+        @test NW.in_switch_band(z) && !NW.in_switch_band(sgn > 0 ? nextfloat(z) : prevfloat(z))
+        @test abs(abs(z - 80.0) - 1e-9) < 1e-13                             # the edge is at 1e-9 km, to roundoff
+    end
+    @test NW.in_switch_band(80.0) && !NW.in_switch_band(80.0 + 2e-9) && !NW.in_switch_band(80.0 - 2e-9)
     # clipping: horizontal components at 0.7c, the vertical wind never
     Mc = model_of(payload(edit! = d -> (d["wind_level_U"][16:17, :, :] .= 400.0)))
     w = query(Mc, phic, lam, 12.5)
@@ -253,6 +262,9 @@ end
     bad(d -> (d["wind_meta"]["ho_km"] = 0.03))                             # the MTGCM levels must be 80 + ho and 85 + ho
     bad(d -> (d["sound_reference"]["temperature_levels_K"] = collect(50.0:50.0:350.0) .+ 1))
     bad(d -> (d["sound_composition"]["R_u"] = 8314.0))
+    bad(d -> (d["support"]["min_clearance_km"] = 0.01))                   # the wind rule's 5 m endpoint
+    bad(d -> (d["support"]["top_areoid_km"] = 80.0))                       # top below the first MTGCM level
+    bad(d -> (d["wind_meta"]["mtgcm_rows_deg"] = collect(-82.5:5.0:82.5)))   # an axis short of the supported latitudes
     # version 1 semantics are unchanged: under the version 1 format the extra keys are not a wind layer
     @test model_of(payload(edit! = d -> (d["format"] = "spaceagora_mars_near_surface_scalars_v1"))).winds === nothing
 end
