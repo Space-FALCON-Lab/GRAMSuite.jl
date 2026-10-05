@@ -29,7 +29,7 @@ Run the repository's synthetic test suite with `julia --project -e 'using Pkg; P
 
 ## Native-free near-surface Mars atmosphere
 
-`GRAMNearSurfaceAtmosphereModel` evaluates a frozen Mars-GRAM lower atmosphere from 5 m above the local terrain to its payload's areoid-height top (75 km in version 1.0.0 of the published preset, 81 km in version 1.1.0), following native Mars-GRAM's own near-surface rule. It returns density, temperature and pressure; winds are not provided. Load a trusted, explicitly supplied payload and query it by geodetic latitude, east longitude and ellipsoid height. Outside its supported domain it throws `DomainError` naming the reason. See the [near-surface guide](docs/near_surface_atmosphere.md); the published payload's terms, including its terrain component, are in [DATA_LICENSE.md](DATA_LICENSE.md).
+`GRAMNearSurfaceAtmosphereModel` evaluates a frozen Mars-GRAM lower atmosphere from 5 m above the local terrain to its payload's areoid-height top (75 km in version 1.0.0 of the published preset, 81 km in version 1.1.0), following native Mars-GRAM's own near-surface rule. It returns density, temperature and pressure; a version 2 payload (planned as preset version 1.2.0) adds east, north and vertical winds and the speed of sound that limits them, while version 1 payloads store no winds. Load a trusted, explicitly supplied payload and query it by geodetic latitude, east longitude and ellipsoid height. Outside its supported domain it throws `DomainError` naming the reason. See the [near-surface guide](docs/near_surface_atmosphere.md); the published payload's terms, including its terrain component, are in [DATA_LICENSE.md](DATA_LICENSE.md).
 
 ## Bounded terrain geometry
 

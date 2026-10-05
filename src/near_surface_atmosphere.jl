@@ -1,31 +1,39 @@
 include("mars_near_surface_scalars.jl")
+include("mars_near_surface_winds.jl")
 
 """
     GRAMNearSurfaceAtmosphereModel(; planet="Mars", surrogate_file, expected_sha256=nothing)
 
 Native-free frozen Mars atmosphere near the surface. It evaluates density, temperature and pressure from 5 m above the
-local terrain up to the payload's areoid-height top, from the component fields of a trusted
-`spaceagora_mars_near_surface_scalars_v1` payload (for example the preset `mars_global_near_surface_p20_frozen_v1`).
-No native GRAM installation, SPICE kernel or GRAM data file is used.
+local terrain up to the payload's areoid-height top, from the component fields of a trusted payload (for example the
+preset `mars_global_near_surface_p20_frozen_v1`). A `spaceagora_mars_near_surface_scalars_v1` payload (versions 1.0.0
+and 1.1.0) stores no winds. A `spaceagora_mars_near_surface_v2` payload (version 1.2.0) has the same scalars plus a
+wind layer: east, north and vertical winds, clipped at 0.7 times the speed of sound as native does
+(`MarsNearSurfaceWinds`). No native GRAM installation, SPICE kernel or GRAM data file is used.
 
 The payload must be given explicitly. It is hashed before and after deserialization: `expected_sha256` pins it, and a
 file that changes while loading is rejected. Supply only trusted Julia-serialized payloads.
 
 Query with [`near_surface_state`](@ref) (geodetic latitude and east longitude in degrees, ellipsoid height in metres) for
-the full result: density, temperature, pressure, gas constant, regime, first level, areoid and surface heights,
-planetocentric latitude, and the status of the surface-layer model used. `density_state` gives the fixed-grid calling
-convention (height in metres, angles in radians) and returns a zero wind vector, because the payload stores no winds.
+the scalar result: density, temperature, pressure, gas constant, regime, first level, areoid and surface heights,
+planetocentric latitude, and the status of the surface-layer model used. With a wind layer,
+[`near_surface_wind_state`](@ref) adds the winds and the speed of sound. `density_state` gives the fixed-grid calling
+convention (height in metres, angles in radians). Its wind vector is the stored winds when the payload has a wind
+layer, and zero otherwise, because a version 1 payload stores no winds.
 
 Queries outside the supported domain throw `DomainError` naming the reason: planetocentric latitude beyond the
 payload's limit, surface height at or above its volcano limit, clearance below its minimum, areoid height above its top,
-or an unavailable component at that position. Query elapsed time is not applied; the atmosphere is a frozen snapshot.
+or an unavailable component at that position (including, with a wind layer, a wind node or a speed of sound that is
+not determined there). Query elapsed time is not applied; the atmosphere is a frozen snapshot.
 Treat the model's arrays and metadata as read-only; concurrent queries may share one model.
 """
 struct GRAMNearSurfaceAtmosphereModel
     core::MarsNearSurfaceScalars.NearSurfaceModel
     source_sha256::String
     metadata::Dict{String, Any}
+    winds::Union{Nothing, MarsNearSurfaceWinds.WindLayer}
 end
+GRAMNearSurfaceAtmosphereModel(core, source_sha256, metadata) = GRAMNearSurfaceAtmosphereModel(core, source_sha256, metadata, nothing)
 
 function _gram_near_surface_file_check(file::String)::String
     isfile(file) || throw(ArgumentError("Near-surface payload file is missing or is not a regular file: '$file'. Supply a downloaded .jls payload."))
@@ -69,14 +77,15 @@ function GRAMNearSurfaceAtmosphereModel(;
         loaded, before
     end
     payload isa AbstractDict || throw(ArgumentError("Invalid near-surface payload '$file': expected a Dict."))
-    core = try
-        MarsNearSurfaceScalars.NearSurfaceModel(payload, digest)
+    core, winds = try
+        c = MarsNearSurfaceScalars.NearSurfaceModel(payload, digest)
+        c, get(payload, "format", "") == MarsNearSurfaceScalars.FORMAT_V2 ? MarsNearSurfaceWinds.WindLayer(payload, c) : nothing
     catch err
         err isa InterruptException && rethrow()
         throw(ArgumentError("Invalid near-surface payload '$file': $(sprint(showerror, err))"))
     end
     metadata = Dict{String, Any}(k => deepcopy(v) for (k, v) in core.metadata)
-    return GRAMNearSurfaceAtmosphereModel(core, digest, metadata)
+    return GRAMNearSurfaceAtmosphereModel(core, digest, metadata, winds)
 end
 
 """
@@ -92,12 +101,44 @@ near_surface_state(model::GRAMNearSurfaceAtmosphereModel, lat_geodetic_deg::Real
     MarsNearSurfaceScalars.near_surface_state(model.core, lat_geodetic_deg, lon_east_deg, h_m)
 
 """
+    near_surface_winds_available(model::GRAMNearSurfaceAtmosphereModel)
+
+Whether the model's payload has a wind layer (format `spaceagora_mars_near_surface_v2`, version 1.2.0).
+"""
+near_surface_winds_available(model::GRAMNearSurfaceAtmosphereModel) = model.winds !== nothing
+
+"""
+    near_surface_wind_state(model::GRAMNearSurfaceAtmosphereModel, lat_geodetic_deg, lon_east_deg, h_m)
+
+The scalar result of [`near_surface_state`](@ref) and, from the payload's wind layer:
+- `wind_east_ms`, `wind_north_ms` and `wind_up_ms`: the winds, with the horizontal components clipped at ±0.7 times
+  the speed of sound, as native clips them;
+- `unclipped_wind_east_ms` and `unclipped_wind_north_ms`: the same winds before clipping;
+- `sound_speed_ms`, and `wind_clipped` (whether either horizontal component was clipped);
+- `wind_regime`, from `:D1` (81 km top band) to `:D5` (5 to 30 m clearance);
+- `composition_side`: `:dry` at or below 80.0 km areoid height, `:switched` above;
+- `in_switch_band`: within 1e-9 km of 80.0 km, where native's sound speed changes composition and its side may differ
+  from the model's (the two height computations differ in their last bits).
+
+Throws `ArgumentError` for a payload without winds, and `DomainError` where the scalars, a needed wind node or the speed
+of sound is unavailable.
+"""
+function near_surface_wind_state(model::GRAMNearSurfaceAtmosphereModel, lat_geodetic_deg::Real, lon_east_deg::Real, h_m::Real)
+    model.winds === nothing && throw(ArgumentError("This near-surface payload stores no winds; version 1.2.0 (format $(MarsNearSurfaceScalars.FORMAT_V2)) has them."))
+    st = MarsNearSurfaceScalars.near_surface_state(model.core, lat_geodetic_deg, lon_east_deg, h_m)
+    merge(st, MarsNearSurfaceWinds.winds(model.winds, model.core, st, lon_east_deg))
+end
+
+"""
     density_state(model::GRAMNearSurfaceAtmosphereModel, h, lat, lon, el_time=0.0, wind=true)
 
 Fixed-grid calling convention for the near-surface model: height above the reference ellipsoid in metres, geodetic
-latitude and east longitude in radians. Returns `(density_kgm3, temperature_K, wind_ENU_ms)`; the payload stores no
-winds, so the wind vector is always zero, whatever `wind` selects. `el_time` must be finite but is not applied.
-Throws `DomainError` outside the supported domain.
+latitude and east longitude in radians. Returns `(density_kgm3, temperature_K, wind_ENU_ms)`.
+- With a wind layer, the wind vector is the clipped east, north and vertical wind of [`near_surface_wind_state`](@ref),
+  whatever `wind` selects; as for the stored winds of the upper grid presets, the caller masks them.
+- Without one, the wind vector is zero, because the payload stores no winds.
+
+`el_time` must be finite but is not applied. Throws `DomainError` outside the supported domain.
 """
 function density_state(
     model::GRAMNearSurfaceAtmosphereModel,
@@ -110,5 +151,7 @@ function density_state(
     altitude, latitude, longitude, elapsed = Float64(h), Float64(lat), Float64(lon), Float64(el_time)
     all(isfinite, (altitude, latitude, longitude, elapsed)) || throw(DomainError((h, lat, lon, el_time), "Near-surface query coordinates and elapsed time must be finite."))
     state = MarsNearSurfaceScalars.near_surface_state(model.core, rad2deg(latitude), rad2deg(longitude), altitude)
-    return state.density_kgm3, state.temperature_K, SVector{3, Float64}(0.0, 0.0, 0.0)
+    model.winds === nothing && return state.density_kgm3, state.temperature_K, SVector{3, Float64}(0.0, 0.0, 0.0)
+    w = MarsNearSurfaceWinds.winds(model.winds, model.core, state, rad2deg(longitude))
+    return state.density_kgm3, state.temperature_K, SVector{3, Float64}(w.wind_east_ms, w.wind_north_ms, w.wind_up_ms)
 end

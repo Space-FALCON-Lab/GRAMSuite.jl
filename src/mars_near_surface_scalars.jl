@@ -20,6 +20,12 @@ module MarsNearSurfaceScalars
 
 const FORMAT = "spaceagora_mars_near_surface_scalars_v1"
 const _ARRAY_KEYS = ("terrain", "level_T_K", "level_R", "level_lnp", "level_source", "surface_T30_K", "surface_T5_K", "q_models")
+# Version 2 payloads (preset 1.2.0) carry the same scalar part plus the wind layer (`MarsNearSurfaceWinds`); its stored
+# fields are arrays, not metadata.
+const FORMAT_V2 = "spaceagora_mars_near_surface_v2"
+const WIND_ARRAY_KEYS = ("wind_level_U", "wind_level_U_source", "wind_level_V", "wind_level_V_source", "wind_mtgcm_U",
+    "wind_mtgcm_U_source", "wind_mtgcm_V", "wind_mtgcm_V_source", "wind_surface_U", "wind_surface_V",
+    "sound_offset_level", "sound_offset_level_source", "sound_offset_surface")
 
 struct NearSurfaceModel
     zs::Matrix{Float64}; ra::Matrix{Float64}
@@ -75,13 +81,15 @@ end
 """
     NearSurfaceModel(payload::AbstractDict, source_sha256::AbstractString)
 
-Validate a deserialized `spaceagora_mars_near_surface_scalars_v1` payload and build the evaluator's immutable view.
+Validate the scalar part of a deserialized `spaceagora_mars_near_surface_scalars_v1` or `spaceagora_mars_near_surface_v2`
+payload and build the evaluator's immutable view (a version 2 payload's wind layer is validated by `MarsNearSurfaceWinds`).
 Component fields may contain finite values or NaN sentinels, but not infinities. The level axis must
 contain every supported terrain-derived first level, and cover the advertised top altitude.
 The arrays are used as stored; treat them as read-only.
 """
 function NearSurfaceModel(d::AbstractDict, digest::AbstractString)
-    get(d, "format", "") == FORMAT || _payload_error("Unsupported near-surface payload format; expected $FORMAT.")
+    format = get(d, "format", "")
+    format in (FORMAT, FORMAT_V2) || _payload_error("Unsupported near-surface payload format; expected $FORMAT or $FORMAT_V2.")
     lowercase(string(get(d, "planet", ""))) == "mars" || _payload_error("Near-surface payload planet must be Mars.")
     for key in ("terrain", "lattice", "support", "levels_km", "level_T_K", "level_R", "level_lnp", "surface_T30_K",
                 "surface_T5_K", "q_models", "radii_km")
@@ -127,7 +135,8 @@ function NearSurfaceModel(d::AbstractDict, digest::AbstractString)
         qs[key] = haskey(qm, "status") ? String(qm["status"][n]) : "unrecorded"
     end
     all(v -> all(isfinite, v), values(q)) || _payload_error("Surface-layer model coefficients must be finite.")
-    meta = Dict{String,Any}(k => v for (k, v) in d if !(k in _ARRAY_KEYS))
+    excluded = format == FORMAT_V2 ? (_ARRAY_KEYS..., WIND_ARRAY_KEYS...) : _ARRAY_KEYS
+    meta = Dict{String,Any}(k => v for (k, v) in d if !(k in excluded))
     NearSurfaceModel(zs, ra, t["lat0_deg"], t["lon0_deg"], t["step_deg"], g["lat0_deg"], g["step_deg"], nlat, nlon,
         levels, d["level_T_K"], d["level_R"], d["level_lnp"], d["surface_T30_K"], d["surface_T5_K"], q, qs,
         radii[1], radii[2], s["zs_refuse_km"], s["phic_max_deg"], s["min_clearance_km"], s["top_areoid_km"],

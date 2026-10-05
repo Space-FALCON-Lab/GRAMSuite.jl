@@ -7,7 +7,7 @@ using StaticArrays
 
 export InitialTime
 export GRAMGridAtmosphereModel, resolve_gram_grid_file
-export GRAMNearSurfaceAtmosphereModel, near_surface_state
+export GRAMNearSurfaceAtmosphereModel, near_surface_state, near_surface_wind_state, near_surface_winds_available
 export GRAMAtmosphereModel, GRAMAtmosphereModelSurrogate
 export point_density_state, density_state, surrogate_density_state
 export precompute_gram_static_grids!, clear_gram_static_grid_cache!, clear_gram_offline_surrogate_cache!
@@ -1939,10 +1939,10 @@ function Serialization.deserialize(s::Serialization.AbstractSerializer, ::Type{G
 end
 
 include("grid_atmosphere.jl")
-include("near_surface_atmosphere.jl")
 include("terrain_geometry.jl")
 export TerrainGeometry
 include("mars_wind_endpoints.jl")
 export MarsWindEndpoints
+include("near_surface_atmosphere.jl")   # after MarsWindEndpoints: the near-surface wind layer uses its slope_wind
 
 end # module GRAMSuite
