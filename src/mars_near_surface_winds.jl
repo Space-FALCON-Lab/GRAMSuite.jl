@@ -44,6 +44,8 @@ const CLIP_FRACTION = 0.7
 const SWITCH_KM = 80.0
 const SWITCH_BAND_KM = 1e-9
 const CLEARANCE_TOLERANCE_KM = 1e-9                                   # the scalar evaluator's accepted outer-domain tolerance
+# The lower-table levels the height rule is written for: D3 ends at 75 km, where D2 begins.
+const LOWER_LEVELS_KM = vcat(collect(-5.0:1.0:10.0), collect(15.0:5.0:75.0))
 # The sound-speed reference and its water and composition rules (the accepted W0 composition revision, version 1.1).
 const TK = [50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 350.0]            # temperature levels, K
 const PK = [1e-2, 1e-1, 1.0, 10.0, 100.0, 1000.0, 1e4, 1e5]            # pressure levels, Pa
@@ -107,6 +109,7 @@ function WindLayer(d::AbstractDict, s::MarsNearSurfaceScalars.NearSurfaceModel)
     any(isnothing, (levels, lons, mt, ulat, vlat, slat)) && _payload_error("wind_meta axes must be real vectors.")
     usides isa AbstractVector{<:Integer} && length(usides) == length(ulat) || _payload_error("wind_meta u_sides must give one integer side per east-wind knot.")
     nl, nlat, nlon = length(levels), s.nlat, s.nlon
+    levels == LOWER_LEVELS_KM || _payload_error("wind_meta levels_km must be the lower-table levels $(LOWER_LEVELS_KM[1]) to $(LOWER_LEVELS_KM[end]) km of the height rule.")
     nl >= 2 && levels == s.levels[1:min(nl, end)] && length(s.levels) == nl + 2 ||
         _payload_error("wind_meta levels_km must be the scalar levels without the two MTGCM levels.")
     ho, off = get(m, "ho_km", nothing), get(m, "solar_offset_h", nothing)
@@ -338,9 +341,13 @@ end
 
 Winds and sound speed at a position whose scalar state `scalars` (`MarsNearSurfaceScalars.near_surface_state` of the
 scalar model `S`, which also supplies the terrain) is known.
-Returns the clipped east, north and vertical winds (m/s), the pre-clip horizontal winds, the sound speed, whether a
-component was clipped, the wind regime, the composition side used, and whether the query lies within `SWITCH_BAND_KM`
-of the switch.
+Returns:
+- the east and north winds clipped at ±0.7c, and the vertical wind, never clipped (m/s);
+- the pre-clip horizontal winds;
+- the sound speed and the interpolated stored sound value (`sound_offset`);
+- whether each horizontal component reaches the limit (`east_clipped`, `north_clipped`; `wind_clipped` if either);
+- the wind regime and the composition side used;
+- whether the query lies within `SWITCH_BAND_KM` of the switch.
 """
 function winds(L::WindLayer, S::MarsNearSurfaceScalars.NearSurfaceModel, st, lon_east_deg::Real)
     φ, l = st.planetocentric_latitude_deg, mod(Float64(lon_east_deg), 360.0)
@@ -355,9 +362,12 @@ function winds(L::WindLayer, S::MarsNearSurfaceScalars.NearSurfaceModel, st, lon
     U, V = Ubg + us, Vbg + vs
     δ = sound_offset(L, g, φ, l, z)
     c = sqrt(gamma(L, st.temperature_K, st.pressure_Pa, z, δ, st.gas_constant) * st.pressure_Pa / st.density_kgm3)
-    Uc, Vc = clamp(U, -0.7c, 0.7c), clamp(V, -0.7c, 0.7c)
+    limit = 0.7c
+    Uc, Vc = clamp(U, -limit, limit), clamp(V, -limit, limit)
+    east_clipped, north_clipped = abs(U) >= limit, abs(V) >= limit       # reaching the limit counts, as in W2's classification
     (wind_east_ms = Uc, wind_north_ms = Vc, wind_up_ms = W, unclipped_wind_east_ms = U, unclipped_wind_north_ms = V,
-     sound_speed_ms = c, wind_clipped = Uc != U || Vc != V, wind_regime = g.regime,
+     sound_speed_ms = c, sound_offset = δ, east_clipped = east_clipped, north_clipped = north_clipped,
+     wind_clipped = east_clipped || north_clipped, wind_regime = g.regime,
      composition_side = z <= SWITCH_KM ? :dry : :switched, in_switch_band = in_switch_band(z))
 end
 

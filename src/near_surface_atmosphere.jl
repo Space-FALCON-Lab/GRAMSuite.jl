@@ -8,8 +8,8 @@ Native-free frozen Mars atmosphere near the surface. It evaluates density, tempe
 local terrain up to the payload's areoid-height top, from the component fields of a trusted payload (for example the
 preset `mars_global_near_surface_p20_frozen_v1`). A `spaceagora_mars_near_surface_scalars_v1` payload (versions 1.0.0
 and 1.1.0) stores no winds. A `spaceagora_mars_near_surface_v2` payload (version 1.2.0) has the same scalars plus a
-wind layer: east, north and vertical winds, clipped at 0.7 times the speed of sound as native does
-(`MarsNearSurfaceWinds`). No native GRAM installation, SPICE kernel or GRAM data file is used.
+wind layer (`MarsNearSurfaceWinds`): east, north and vertical winds. As native does, the east and north winds are clipped
+at 0.7 times the speed of sound; the vertical wind is not clipped. No native GRAM installation, SPICE kernel or GRAM data file is used.
 
 The payload must be given explicitly. It is hashed before and after deserialization: `expected_sha256` pins it, and a
 file that changes while loading is rejected. Supply only trusted Julia-serialized payloads.
@@ -111,10 +111,12 @@ near_surface_winds_available(model::GRAMNearSurfaceAtmosphereModel) = model.wind
     near_surface_wind_state(model::GRAMNearSurfaceAtmosphereModel, lat_geodetic_deg, lon_east_deg, h_m)
 
 The scalar result of [`near_surface_state`](@ref) and, from the payload's wind layer:
-- `wind_east_ms`, `wind_north_ms` and `wind_up_ms`: the winds, with the horizontal components clipped at ±0.7 times
-  the speed of sound, as native clips them;
-- `unclipped_wind_east_ms` and `unclipped_wind_north_ms`: the same winds before clipping;
-- `sound_speed_ms`, and `wind_clipped` (whether either horizontal component was clipped);
+- `wind_east_ms`, `wind_north_ms` and `wind_up_ms`: the winds. As native does, the east and north components are
+  clipped at ±0.7 times the speed of sound; the vertical wind is not clipped;
+- `unclipped_wind_east_ms` and `unclipped_wind_north_ms`: the horizontal winds before clipping;
+- `sound_speed_ms`, and `sound_offset`, the interpolated stored sound value it was computed from;
+- `east_clipped` and `north_clipped`: whether that component's unclipped wind reaches the limit (reaching it counts), and
+  `wind_clipped` if either does;
 - `wind_regime`, from `:D1` (81 km top band) to `:D5` (5 to 30 m clearance);
 - `composition_side`: `:dry` at or below 80.0 km areoid height, `:switched` above;
 - `in_switch_band`: within 1e-9 km of 80.0 km, where native's sound speed changes composition and its side may differ
@@ -134,7 +136,8 @@ end
 
 Fixed-grid calling convention for the near-surface model: height above the reference ellipsoid in metres, geodetic
 latitude and east longitude in radians. Returns `(density_kgm3, temperature_K, wind_ENU_ms)`.
-- With a wind layer, the wind vector is the clipped east, north and vertical wind of [`near_surface_wind_state`](@ref),
+- With a wind layer, the wind vector is the east and north winds clipped at ±0.7c and the unclipped vertical wind of
+  [`near_surface_wind_state`](@ref),
   whatever `wind` selects; as for the stored winds of the upper grid presets, the caller masks them.
 - Without one, the wind vector is zero, because the payload stores no winds.
 

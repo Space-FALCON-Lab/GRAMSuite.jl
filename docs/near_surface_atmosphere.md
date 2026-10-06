@@ -6,7 +6,8 @@ reproduces native Mars-GRAM's own near-surface rule from stored component fields
 density, temperature and pressure. It needs no native GRAM installation, SPICE kernel or GRAM data file.
 - Version 1 payloads (format `spaceagora_mars_near_surface_scalars_v1`, preset versions 1.0.0 and 1.1.0) store no winds.
 - A version 2 payload (format `spaceagora_mars_near_surface_v2`, planned as preset version 1.2.0) has the same scalars
-  plus a wind layer: east, north and vertical winds, and the speed of sound that limits them ([Winds](#winds-format-2)).
+  plus a wind layer: east, north and vertical winds, and the speed of sound that limits the horizontal winds
+  ([Winds](#winds-format-2)).
 
 ```julia
 using GRAMSuite
@@ -25,7 +26,7 @@ rho, T, wind = density_state(model, 250.0, deg2rad(-4.5), deg2rad(137.4))
 # version 2 payloads: the scalars plus the winds and the speed of sound
 near_surface_winds_available(model)
 w = near_surface_wind_state(model, -4.5, 137.4, 250.0)
-w.wind_east_ms, w.wind_north_ms, w.wind_up_ms, w.sound_speed_ms, w.wind_clipped, w.wind_regime
+w.wind_east_ms, w.wind_north_ms, w.wind_up_ms, w.sound_speed_ms, w.east_clipped, w.north_clipped, w.wind_regime
 ```
 
 The payload must be supplied explicitly; nothing is searched for or downloaded. The published preset
@@ -92,7 +93,8 @@ winds and the vertical wind. It uses the terrain slopes from ±0.25 degree diffe
   queries (`in_switch_band`).
 
 **Clipping.** The east and north winds are clipped to ±0.7 c, as native clips them. The vertical wind is not.
-`near_surface_wind_state` also returns the unclipped components and whether a component was clipped.
+`near_surface_wind_state` also returns the unclipped components, and for each horizontal component whether its unclipped
+wind reaches the limit (reaching it counts as clipped).
 
 **Refusals.** A query needing a stored node that is unavailable, or a speed of sound that the reference or the
 composition does not determine, throws `DomainError` naming the field, endpoint, knot and longitude, or the cell.

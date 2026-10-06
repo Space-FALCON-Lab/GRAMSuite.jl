@@ -221,8 +221,20 @@ end
     Mc = model_of(payload(edit! = d -> (d["wind_level_U"][16:17, :, :] .= 400.0)))
     w = query(Mc, phic, lam, 12.5)
     @test w.unclipped_wind_east_ms == 400.0 && w.wind_east_ms == 0.7 * w.sound_speed_ms && w.wind_clipped
-    @test w.wind_north_ms == w.unclipped_wind_north_ms
+    @test w.east_clipped && !w.north_clipped && w.wind_north_ms == w.unclipped_wind_north_ms
+    Mneg = model_of(payload(edit! = d -> (d["wind_level_V"][16:17, :, :] .= -400.0)))
+    wn = query(Mneg, phic, lam, 12.5)
+    @test wn.north_clipped && !wn.east_clipped && wn.wind_north_ms == -0.7 * wn.sound_speed_ms && wn.unclipped_wind_north_ms == -400.0
     @test !query(M, phic, lam, 12.5).wind_clipped
+    # a component counts as clipped when its unclipped wind reaches the limit (as in W2's classification)
+    for (m, z) in ((M, 12.5), (Mc, 12.5), (Mneg, 12.5), (M, 80.8), (M, zsurf(M, phic, lam) + 0.0175))
+        q = query(m, phic, lam, z); limit = 0.7 * q.sound_speed_ms
+        @test q.east_clipped == (abs(q.unclipped_wind_east_ms) >= limit) && q.north_clipped == (abs(q.unclipped_wind_north_ms) >= limit)
+        @test q.wind_clipped == (q.east_clipped || q.north_clipped) && q.wind_east_ms == clamp(q.unclipped_wind_east_ms, -limit, limit)
+    end
+    # the stored sound value used: in D3 the levels' offsets (0.001 times the level index) by the height weight
+    q = query(M, phic, lam, 12.5); a = (q.areoid_height_km - 10.0) / 5.0
+    @test q.sound_offset ≈ (1 - a) * 0.016 + a * 0.017 rtol = 1e-12
     # the fixed-grid convention returns the clipped winds
     g, l, h = at(Mc, phic, lam, 12.5)
     ref = near_surface_wind_state(Mc, rad2deg(deg2rad(g)), rad2deg(deg2rad(l)), h)
@@ -262,6 +274,7 @@ end
     bad(d -> (d["wind_meta"]["ho_km"] = 0.03))                             # the MTGCM levels must be 80 + ho and 85 + ho
     bad(d -> (d["sound_reference"]["temperature_levels_K"] = collect(50.0:50.0:350.0) .+ 1))
     bad(d -> (d["sound_composition"]["R_u"] = 8314.0))
+    bad(d -> (d["levels_km"][29] = 74.0; d["wind_meta"]["levels_km"][29] = 74.0))   # the rule's D3 ends at 75 km
     bad(d -> (d["support"]["min_clearance_km"] = 0.01))                   # the wind rule's 5 m endpoint
     bad(d -> (d["support"]["top_areoid_km"] = 80.0))                       # top below the first MTGCM level
     bad(d -> (d["wind_meta"]["mtgcm_rows_deg"] = collect(-82.5:5.0:82.5)))   # an axis short of the supported latitudes
