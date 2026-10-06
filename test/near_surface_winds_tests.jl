@@ -226,6 +226,29 @@ end
     wn = query(Mneg, phic, lam, 12.5)
     @test wn.north_clipped && !wn.east_clipped && wn.wind_north_ms == -0.7 * wn.sound_speed_ms && wn.unclipped_wind_north_ms == -400.0
     @test !query(M, phic, lam, 12.5).wind_clipped
+    # the limit exactly: east and north, both signs, just below, at and just above 0.7c. The sound speed does not depend
+    # on the stored winds, so the limit is the reference query's; the stored levels are set so that the unclipped wind
+    # at the query is exactly the target.
+    limit = 0.7 * query(M, phic, lam, 12.5).sound_speed_ms
+    function exactly(component, target)
+        key, field = component === :east ? ("wind_level_U", :unclipped_wind_east_ms) : ("wind_level_V", :unclipped_wind_north_ms)
+        stored = target
+        for _ in 1:64
+            m = model_of(payload(edit! = d -> (d[key][16:17, :, :] .= stored)))
+            got = getproperty(query(m, phic, lam, 12.5), field)
+            got == target && return m
+            stored = got < target ? nextfloat(stored) : prevfloat(stored)
+        end
+        error("No stored level gives exactly $target")
+    end
+    for component in (:east, :north), sgn in (1.0, -1.0), (case, target) in ((:below, prevfloat(limit)), (:at, limit), (:above, nextfloat(limit)))
+        q = query(exactly(component, sgn * target), phic, lam, 12.5)
+        u, out, flag, other = component === :east ? (q.unclipped_wind_east_ms, q.wind_east_ms, q.east_clipped, q.north_clipped) :
+                                                    (q.unclipped_wind_north_ms, q.wind_north_ms, q.north_clipped, q.east_clipped)
+        @test 0.7 * q.sound_speed_ms == limit && u == sgn * target
+        @test flag == (case !== :below) && !other && q.wind_clipped == flag
+        @test out == (case === :below ? u : sgn * limit)
+    end
     # a component counts as clipped when its unclipped wind reaches the limit (as in W2's classification)
     for (m, z) in ((M, 12.5), (Mc, 12.5), (Mneg, 12.5), (M, 80.8), (M, zsurf(M, phic, lam) + 0.0175))
         q = query(m, phic, lam, z); limit = 0.7 * q.sound_speed_ms
