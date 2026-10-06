@@ -33,12 +33,13 @@ fMU(m, φ) = 30.0 + 5m + 0.1φ; fMV(m, φ) = -10.0 + m - 0.05φ
 fSU(m, φ) = 2.0 + m + 0.1φ; fSV(m, φ) = 1.0 + m - 0.05φ
 const SLOPES = [NaN, 0.023, 0.028, 0.041, NaN, NaN, NaN]
 
-function payload(; format = "spaceagora_mars_near_surface_v2", winds = true, edit! = identity)
+function payload(; format = "spaceagora_mars_near_surface_v2", winds = true, lattice_step = 7.5, longitude_count = 48, edit! = identity)
     tlat0, tstep, tlon0 = -90.0, 5.0, 0.488
     nr, nc = 37, 72
     zs = [0.5 + 0.01 * max(0.0, 50.0 - abs(tlon0 + tstep * (j - 1) - 245.488)) for i in 1:nr, j in 1:nc]
     ra = fill(3390.0, nr, nc)
-    lat0, lstep, nlat, nlon = -90.0, 7.5, 25, 48
+    lat0, lstep = -90.0, lattice_step
+    nlat, nlon = ceil(Int, 180 / lstep) + 1, longitude_count
     nl = length(LEVELS)
     band = Int[]; cell = Int[]; L = Int[]
     for b in -12:11, c in 0:39, l in (1, 2)
@@ -102,6 +103,39 @@ message(f) = try; f(); ""; catch e; e isa DomainError ? string(e.msg) : rethrow(
 
 const M = model_of(payload())
 const M1 = model_of(payload(format = "spaceagora_mars_near_surface_scalars_v1", winds = false))
+
+@testset "Wind longitude lattice covers one full period" begin
+    # Matching scalar/wind axes and array shapes are not sufficient: the stored
+    # columns must span one 360-degree period, without a gap or duplicate wrap.
+    for step in (5.0, 8.0, 7.500001)
+        @test_throws ArgumentError model_of(payload(lattice_step = step))
+    end
+    for step in (prevfloat(7.5), 7.5, nextfloat(7.5))
+        roundoff = model_of(payload(lattice_step = step))
+        L = roundoff.winds
+        i, j, w = NW.lon_bracket(L, prevfloat(360.0))
+        @test (i, j) == (L.nlon, 1)
+        @test 0.0 <= w <= 1.0
+        i, j, w = NW.lon_bracket_seam(L, prevfloat(360.0))
+        @test (i, j) == (L.nlon, L.nlon + 1)
+        @test 0.0 <= w <= 1.0
+        @test NW.lon_bracket_seam(L, 360.0) == (L.nlon + 1, L.nlon + 1, 0.0)
+        for z in (0.52, 2.0, 80.5)
+            @test isfinite(query(roundoff, 10.3, prevfloat(360.0), z).wind_east_ms)
+        end
+    end
+    fine = model_of(payload(lattice_step = 5.0, longitude_count = 72))
+    for m in (M, fine), z in (0.52, 2.0, 80.5), longitude in (0.0, 300.0, 359.999)
+        w = query(m, 10.3, longitude, z)
+        @test all(isfinite, (w.wind_east_ms, w.wind_north_ms, w.wind_up_ms, w.sound_speed_ms))
+        for wrapped in (longitude - 360, longitude + 360)
+            other = query(m, 10.3, wrapped, z)
+            @test other.wind_east_ms ≈ w.wind_east_ms
+            @test other.wind_north_ms ≈ w.wind_north_ms
+            @test other.sound_speed_ms ≈ w.sound_speed_ms
+        end
+    end
+end
 
 @testset "Version 1 payloads keep zero wind" begin
     @test !near_surface_winds_available(M1) && near_surface_winds_available(M)

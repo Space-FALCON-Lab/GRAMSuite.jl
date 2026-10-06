@@ -115,6 +115,8 @@ function WindLayer(d::AbstractDict, s::MarsNearSurfaceScalars.NearSurfaceModel)
     ho, off = get(m, "ho_km", nothing), get(m, "solar_offset_h", nothing)
     all(x -> x isa Real && !(x isa Bool) && isfinite(x), (ho, off)) || _payload_error("wind_meta ho_km and solar_offset_h must be finite.")
     s.levels[nl+1] == 80.0 + ho && s.levels[nl+2] == 85.0 + ho || _payload_error("The scalar MTGCM levels must be 80 + ho_km and 85 + ho_km.")
+    isapprox(nlon * s.lstep, 360.0; rtol = 0.0, atol = 8eps(360.0)) ||
+        _payload_error("The wind longitude lattice must cover one full 360-degree period (nlon * step_deg = 360).")
     lons == [s.lstep * (j - 1) for j in 1:nlon] || _payload_error("wind_meta longitudes_deg must be the scalar lattice longitudes.")
     slat == [s.lat0 + s.lstep * (i - 1) for i in 1:nlat] || _payload_error("wind_meta s_knots_deg must be the scalar lattice latitudes.")
     for (name, lat) in (("u_knots_deg", ulat), ("v_knots_deg", vlat), ("mtgcm_rows_deg", mt))
@@ -173,15 +175,17 @@ function lat_bracket(ax::Axis, φ)
 end
 "Bracketing stored longitudes (1-based, periodic) and weight; l in [0, 360)."
 function lon_bracket(L::WindLayer, l)
-    x = mod(l, 360.0) / L.lstep; j = floor(Int, x)
-    (j + 1, mod(j + 1, L.nlon) + 1, x - j)
+    # Period validation allows a few ulps; keep the final cell in bounds even
+    # if division rounds a longitude just below 360 degrees to nlon.
+    x = mod(l, 360.0) / L.lstep; j = min(floor(Int, x), L.nlon - 1)
+    (j + 1, mod(j + 1, L.nlon) + 1, min(x - j, 1.0))
 end
 "The surface east wind's seam-split longitudes (0+ first, 360- last); exactly at 0 E the west side."
 function lon_bracket_seam(L::WindLayer, l)
     l = mod(l, 360.0)
     l == 0.0 && return (L.nlon + 1, L.nlon + 1, 0.0)
-    x = l / L.lstep; j = floor(Int, x)
-    (j + 1, j + 2, x - j)
+    x = l / L.lstep; j = min(floor(Int, x), L.nlon - 1)
+    (j + 1, j + 2, min(x - j, 1.0))
 end
 
 "Names an unavailable stored node in a refusal."
