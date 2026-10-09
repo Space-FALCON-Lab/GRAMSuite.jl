@@ -12,6 +12,7 @@ include("terrain_geometry_tests.jl")
 include("mars_wind_endpoints_tests.jl")
 include("cache_regression.jl")
 include("constructor_recipe_tests.jl")
+include("first_use_wind_tests.jl")
 include("mapyear_profile_tests.jl")
 @test GRAMSuite._GRAM_WRAPPER[] === nothing
 @test isempty(filter(p -> occursin(r"(?i)(libgram|libcspice)",p),

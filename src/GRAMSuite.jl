@@ -1369,7 +1369,8 @@ function _gram_density_state_native(
     atmos = Base.invokelatest(get_dynamics_state, model.gram_atmosphere)
     rho_local = Float64(atmos.density)
     T_local = Float64(atmos.temperature)
-    if isdefined(model.gram, :get_winds_state)
+    # Native bindings can be loaded after the current caller entered its world.
+    if Base.invokelatest(isdefined, model.gram, :get_winds_state)
         get_winds_state = Base.invokelatest(getfield, model.gram, :get_winds_state)
         winds = Base.invokelatest(get_winds_state, model.gram_atmosphere)
         wind_mode = _gram_wind_mode()
