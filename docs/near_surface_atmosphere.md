@@ -1,11 +1,12 @@
 # Native-free near-surface Mars atmosphere
 
 `GRAMNearSurfaceAtmosphereModel` evaluates a frozen Mars-GRAM lower atmosphere from 5 m above the local terrain to
-the payload's areoid-height top: 75 km in version 1.0.0 of the published preset, and 81 km in version 1.1.0. It
-reproduces native Mars-GRAM's own near-surface rule from stored component fields, and returns
-density, temperature and pressure. It needs no native GRAM installation, SPICE kernel or GRAM data file.
+the payload's areoid-height top: 75 km in version 1.0.0 of the published preset, and 81 km in versions 1.1.0 and
+1.2.0. It reproduces native Mars-GRAM's own near-surface rule from stored component fields, and returns density,
+temperature and pressure, and, from a version 2 payload, winds and the speed of sound. It needs no native GRAM
+installation, SPICE kernel or GRAM data file.
 - Version 1 payloads (format `spaceagora_mars_near_surface_scalars_v1`, preset versions 1.0.0 and 1.1.0) store no winds.
-- A version 2 payload (format `spaceagora_mars_near_surface_v2`, planned as preset version 1.2.0) has the same scalars
+- A version 2 payload (format `spaceagora_mars_near_surface_v2`, preset version 1.2.0) has the same scalars
   plus a wind layer: east, north and vertical winds, and the speed of sound that limits the horizontal winds
   ([Winds](#winds-format-2)).
 
@@ -30,9 +31,9 @@ w.wind_east_ms, w.wind_north_ms, w.wind_up_ms, w.sound_speed_ms, w.east_clipped,
 ```
 
 The payload must be supplied explicitly; nothing is searched for or downloaded. The published preset
-`mars_global_near_surface_p20_frozen_v1` is distributed as GRAMSuite release assets in two versions, 1.0.0 (to 75 km)
-and 1.1.0 (to 81 km). Each archive's README states its validation and terms. SpaceAGORA's `surrogate_preset_model`
-installs and verifies a named version.
+`mars_global_near_surface_p20_frozen_v1` is distributed as GRAMSuite release assets in three versions: 1.0.0 (to
+75 km), 1.1.0 (to 81 km) and 1.2.0 (1.1.0's scalars bit for bit, with stored winds). Each archive's README states its
+validation and terms. SpaceAGORA's `surrogate_preset_model` installs and verifies a named version.
 
 ## Evaluation rule
 
@@ -66,7 +67,9 @@ payload records. At or above `L1` the status is `"not used"`.
 A version 2 payload stores pre-clip east and north winds and sound-speed offsets as evaluated outputs on native-aligned
 rows and longitudes. No GRAM table is stored. The scalars are the version 1 rule's, unchanged.
 
-**Height.** Five regimes interpolate linearly in height between stored endpoints:
+**Height.** Five regimes interpolate between stored endpoints, with a weight linear in the query's own height: its
+clearance above the surface in D5 and D4, and its areoid height between the endpoint levels in D3, D2 and D1. The
+slope-wind term (below) is added afterwards and varies with the clearance.
 
 | Regime | Heights | Endpoints |
 |---|---|---|
@@ -100,15 +103,28 @@ wind reaches the limit (reaching it counts as clipped).
 composition does not determine, throws `DomainError` naming the field, endpoint, knot and longitude, or the cell.
 Winds are never returned as zero for lack of data.
 
+**Validation of 1.2.0.** The published wind layer was validated against native Mars-GRAM at the frozen instant in
+three stages, each frozen before collection with its limits fixed in advance: at fresh hold-out points; pointwise, on
+fixed descent paths and in propagated descents; and in SpaceAGORA's engine, in ballistic entries with the global upper
+preset above 80 km. Its archive README states the limits and what the validation does not establish. It also states
+the exemptions:
+- at the exact wind jumps (78.75 N and 82.5 N) and at exact first-level contours, native can resolve a query to the
+  other side, and the values the evaluator returns there were validated only where its own side matched native;
+- native's extrapolation band at the contours;
+- the 80 km composition switch.
+
 ## Refusals
 
 A query outside the supported domain throws `DomainError` with the first reason that applies:
 1. planetocentric latitude beyond the payload's limit (85 degrees for the published preset);
 2. surface height at or above its volcano limit (9 km);
 3. clearance below its minimum (5 m);
-4. areoid height above its top (75 km in 1.0.0, 81 km in 1.1.0);
+4. areoid height above its top (75 km in 1.0.0, 81 km in 1.1.0 and 1.2.0);
 5. a needed component is unavailable;
-6. no surface-layer model exists for the query's cell.
+6. no surface-layer model exists for the query's cell;
+7. with the winds of a version 2 payload (`near_surface_wind_state` and `density_state`): a needed stored wind value
+   is unavailable, or the speed of sound is not determined. In the published 1.2.0 this happens in deep, narrow
+   terrain, at heights between −5 and 7 km areoid height; `near_surface_state` still serves the scalars there.
 
 There is no extrapolation and no native fallback.
 
