@@ -1,10 +1,50 @@
 # GRAMSuite.jl
 
-Julia interfaces for fixed atmosphere grids and the advanced native NASA GRAM Suite backend.
+GRAMSuite supplies density, temperature and winds for atmospheric simulation in
+Julia. It can evaluate a saved, frozen atmosphere without a native installation,
+or call NASA GRAM Suite through its native backend. SpaceAGORA uses these models
+through an optional package extension; GRAMSuite can also be used on its own.
+
+## Start here
+
+The [getting-started guide](docs/getting_started.md) walks through installation,
+a small runnable example, and the connection to SpaceAGORA. Choose a frozen grid
+when its epoch and coverage suit your study. Use the native backend when you need
+GRAM's evolving atmosphere or are generating a new snapshot.
+
+| I want to… | Start with |
+| --- | --- |
+| Install the package and make a first query | [Installation](#installation) and the [first example](docs/getting_started.md#make-a-first-query) |
+| Use an atmosphere in SpaceAGORA | [SpaceAGORA connection](docs/getting_started.md#use-it-with-spaceagora) |
+| Choose a model or check compatibility | [Model and compatibility guide](docs/getting_started.md#choose-a-model-and-check-compatibility) |
+| Work near the Mars surface | [Near-surface atmosphere](docs/near_surface_atmosphere.md) |
+| Generate and validate another frozen atmosphere | [Recorded recipes](docs/grid_generation.md) |
+| Understand validity, citations and data terms | [Validation and attribution](docs/getting_started.md#validation-and-attribution) |
+
+## Installation
+
+The standalone Julia package supports Julia 1.10 and later. SpaceAGORA's current
+integration uses Julia 1.12. From Julia, create a working environment and install
+the unregistered package:
+
+```julia
+using Pkg
+Pkg.activate("gramsuite-work")
+Pkg.add(url="https://github.com/Space-FALCON-Lab/GRAMSuite.jl")
+```
+
+This installs the Julia code and its dependencies. Native GRAM and atmosphere
+payloads are separate inputs. Keep the environment's Project and Manifest files
+with your study to record the package revision; the command above follows the
+repository's default branch at installation time.
+
+For a local GRAMSuite checkout, use `Pkg.develop(path="/path/to/GRAMSuite.jl")`
+in your working environment instead. If you are starting from SpaceAGORA, follow
+its pinned setup route in the [connection guide](docs/getting_started.md#use-it-with-spaceagora).
 
 ## Native-free fixed grids
 
-`GRAMGridAtmosphereModel` loads a trusted, downloaded grid without a native GRAM installation, SPICE kernels or a C/C++ toolchain. Install the Julia package from your checkout, then provide the grid explicitly:
+`GRAMGridAtmosphereModel` loads a trusted, downloaded grid without a native GRAM installation, SPICE kernels or a C/C++ toolchain. After installing the Julia package, provide the grid explicitly. To try the API before obtaining a real atmosphere, run the [small synthetic example](docs/getting_started.md#make-a-first-query).
 
 ```julia
 using GRAMSuite
@@ -206,20 +246,10 @@ can otherwise be mistaken for a native one.
 
 ### 2. Install the Julia package
 
-See [SpaceAGORA.jl documentation](https://www.spacefalconlab.com/SpaceAGORA.jl/) for package-specific installation.
-
-From the repository root in the Julia REPL:
-
-```julia
-using Pkg
-Pkg.develop(path=".")
-```
-
-Or add it to another project:
-
-```julia
-Pkg.add(url="https://github.com/Space-FALCON-Lab/GRAMSuite.jl")
-```
+Use the [installation instructions](#installation) above. The same Julia package
+serves both frozen grids and the native backend. For a SpaceAGORA mission,
+continue with its [native GRAM setup guide](https://github.com/Space-FALCON-Lab/SpaceAGORA.jl/blob/main/docs/src/user/gramsuite_setup.md),
+which also explains the `data/GRAMSuite.jl` checkout and the extension.
 
 ### 3. Verify the installation
 
