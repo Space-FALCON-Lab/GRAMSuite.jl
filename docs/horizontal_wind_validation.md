@@ -27,6 +27,9 @@ The files may contain multiple slices at different heights or locations. There i
 
 ## Run a comparison
 
+From the GRAMSuite.jl repository root, with `nodes.csv` and `reference.csv`
+in that working directory (or replace them with explicit paths):
+
 ```sh
 python3 scripts/validation/horizontal_wind.py \
   --nodes nodes.csv --reference reference.csv --out comparison \

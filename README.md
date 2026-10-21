@@ -109,9 +109,10 @@ Runtime static grids belong to their actual model instances. Warm the supplied m
   - **Linux arm64/aarch64** — no bundled archive; see
     [CSPICE on unbundled platforms](#cspice-on-unbundled-platforms)
 
-You do **not** need a Fortran compiler. GRAM's build configuration names
-`gfortran`, but `Build/makefile.defs` ends with `undefine FC`, which disables
-the Fortran example targets — the shared-library build never invokes it.
+The build details below describe the shared-library interface expected by the
+integration scripts. The native `Build` files are supplied externally, so check
+the compiler requirements and CSPICE setup in that installation; the public
+checkout cannot establish whether its makefiles disable Fortran examples.
 
 ### Acquiring GRAM
 
@@ -119,33 +120,41 @@ GRAM Suite 2.0 is controlled software distributed by NASA. Request a copy throug
 
 **https://software.nasa.gov/software/MFS-33888-1**
 
-Once approved, you will receive an archive containing the GRAM Suite source code, data files, and SPICE kernels. Place the extracted `GRAM Suite 2.0` folder at the root of this repository (alongside `src/` and `Project.toml`).
+Follow NASA's distribution terms and instructions for the native source and
+input data. The public checkout's `GRAM Suite 2.0` directory is only partial:
+it does not contain `Build`, `common` or the planet data. Keep the native
+installation separate and pass its path to the build scripts, or carefully
+assemble the expected layout without overwriting these Julia bindings.
+The scripts require `Build/setup_cspice.sh` and a GNU Make `shared` target;
+obtaining an archive alone does not establish that those integration files exist.
 
 ### Native setup
 
 ### 1. Build the shared library
 
 The Julia package calls GRAM through FFI, so the native shared library must be
-compiled once per machine. It is never shipped prebuilt, and a library built on
-one machine is not usable on another.
+built for a compatible platform and native interface. This public checkout does
+not supply a ready-to-use native library. A copied library needs compatible
+architecture, runtime dependencies and GRAM data; do not infer compatibility
+from its filename.
 
-One command does the whole thing. The path argument is optional — the script
-walks up from its own location to find the tree containing `Build/` and
+From the repository root, pass the external installation path. If omitted, the
+script searches known relative locations for a tree containing `Build/` and
 `Julia/`:
 
 **macOS / Linux:**
 ```bash
-"GRAM Suite 2.0/simulation/GRAM/build_gram.sh"
+"GRAM Suite 2.0/simulation/GRAM/build_gram.sh" "/absolute/path/to/GRAM Suite 2.0"
 ```
 
 **Windows (PowerShell):**
 ```powershell
-& ".\GRAM Suite 2.0\simulation\GRAM\build_gram.ps1"
+& ".\GRAM Suite 2.0\simulation\GRAM\build_gram.ps1" "C:\path\to\GRAM Suite 2.0"
 ```
 
 **Windows (CMD):**
 ```cmd
-"GRAM Suite 2.0\simulation\GRAM\build_gram.cmd"
+"GRAM Suite 2.0\simulation\GRAM\build_gram.cmd" "C:\path\to\GRAM Suite 2.0"
 ```
 
 Pass an explicit root only if this folder has been moved outside a GRAM Suite
@@ -170,9 +179,6 @@ The script, in order:
    `GRAM_ROOT` and `GRAM_LIB` for this machine
 5. writes `simulation/GRAM/.gram-build-manifest`, recording the host platform
    and root path the artifacts were built for
-
-A build from clean takes roughly 20 seconds on 24 cores, or about 3 minutes of
-total CPU time.
 
 `gram.env` and `.gram-build-manifest` contain absolute paths for the machine
 that produced them. They are gitignored and must never be committed — a
@@ -242,7 +248,7 @@ can otherwise be mistaken for a native one.
 | `Could not auto-find a Linux CSPICE archive` | Architecture with no bundled archive — see above. |
 | `gmake not found` on macOS | `brew install make`. GNU Make is required. |
 | `make` succeeded but there is no `libGRAM` | You ran `make` or a per-planet target instead of `make shared`. |
-| Library builds, but a planet errors at query time | A data problem, not a build problem. Run `git lfs pull` and confirm the planet's `data/` folder came across from the GRAM distribution. |
+| Library builds, but a planet errors at query time | Inspect the native error and the selected data/SPICE paths. Confirm the planet's inputs exist and are real files rather than LFS pointers. A successful build alone does not rule out interface, configuration or input errors. |
 
 ### 2. Install the Julia package
 
@@ -279,6 +285,8 @@ using GRAMSuite
 # to the repository root; override with absolute paths as needed.
 model = GRAMAtmosphereModel(
     planet_name = "mars",
+    is_planetocentric = false,
+    mars_mola_heights = false,
     initial_time = InitialTime(year=2024, month=6, day=1)
 )
 
@@ -334,28 +342,28 @@ The GRAM Suite ships with a starter pack of NAIF SPICE kernels covering dates fr
 
 ## Height and latitude conventions
 
-The wrapper's `density_state` path accepts SI inputs — height in meters, latitude and
-longitude in radians — and converts them once at the native boundary (km / degrees).
-The conventions those inputs are interpreted under matter at the kilometer level:
+The native `density_state` boundary converts height from metres to kilometres
+and angles from radians to degrees. Coordinate *meaning* must be configured
+separately; converting units does not select a height datum.
 
-- **Latitude/height pair**: callers supply Bowring **planetodetic** latitude with
-  **geodetic height above the reference ellipsoid** (what SpaceAGORA's `rtolatlong`
-  produces). The wrapper passes `is_planetocentric=false`, so native GRAM converts
-  the pair to planetocentric internally (`Position::convertToPlanetocentric`).
-  Labeling geodetic inputs planetocentric mis-references the height by the local
-  ellipsoid geometry — up to ~2 km at Mars polar latitudes, which is a ~25% density
-  error at aerobraking heights (density scale height ~7 km).
-- **Mars height reference**: native MarsGRAM defaults to `isMolaHeights=true`
-  (heights above the MOLA areoid, planetocentric inputs required). The wrapper
-  defaults this to **false** so heights are referenced to the ellipsoid, matching
-  the geodetic inputs above. Opting back in via `mars_mola_heights=true` requires
-  planetocentric positions and is therefore incompatible with the wrapper's
-  `density_state` inputs — native GRAM raises an error at the first query.
-- **Sanity check**: native GRAM echoes the resolved radius via `get_position`
-  (`totalRadius`); with the defaults above a known planetocentric radius round-trips
-  to sub-meter accuracy. Passing radius-based altitudes (`r − R_equatorial`) as the
-  height is wrong under *either* setting — at 80° latitude it lands ~17.5 km below
-  the intended point (~14× density).
+For geodetic latitude and ellipsoid height, explicitly request
+`is_planetocentric=false` and, for Mars, `mars_mola_heights=false`, as in the
+usage example. If the study uses specific ellipsoid radii, pass both
+`equatorial_radius_km` and `polar_radius_km` and retain them with the run recipe.
+Select the epoch, time frame, forcing and perturbation settings deliberately.
+
+The constructor defaults both coordinate options to `nothing`, preserving the
+loaded binding/native defaults. The bundled binding defaults position queries
+to `is_planetocentric=true`; the wrapper does not turn off Mars MOLA heights
+unless asked. Therefore an unconfigured native model must not be assumed to
+interpret geodetic/ellipsoidal inputs correctly. An unavailable requested setter
+is an error.
+
+Areoid height, ellipsoid height and radius minus an equatorial radius are
+different quantities. Do not interchange them. Use the native position readback
+and a known geometric point to verify a chosen reference configuration. The
+native-free grid and near-surface interfaces state their own coordinate
+contracts in their guides.
 
 ## Bounded frozen Mars wind endpoints
 

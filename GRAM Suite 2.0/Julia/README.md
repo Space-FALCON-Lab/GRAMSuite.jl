@@ -2,18 +2,24 @@
 
 This folder provides a minimal Julia wrapper around the existing GRAM C API (`Gram_C.h`) using `ccall`.
 
-## 1. Build GRAM as a shared library
+## 1. Prepare the native installation
 
-1. Install GNU Make (macOS):
-   - `brew install make`
-2. Confirm `Build/makefile.defs` includes `../makefile.defs.macos` (this repo is now configured that way)
-3. Ensure a macOS CSPICE static archive exists and set `SPICE_LIB` if needed:
-   - Apple Silicon default: `common/cspice/lib/cspice_macos_arm64.a`
-   - Intel default: `common/cspice/lib/cspice_macos_x86_64.a`
-4. Build:
-   - `cd Build`
-   - `gmake clean`
-   - `gmake shared -j`
+The public checkout supplies this Julia binding, but not the native `Build` or
+`common` directories or the planetary input data. Obtain a compatible GRAM Suite
+installation using the [package setup guide](../../README.md#acquiring-gram).
+Keep the Julia binding and native C interface versions compatible.
+
+From the GRAMSuite.jl repository root, run the platform build script with the
+absolute path to that installation. For macOS/Linux:
+
+```sh
+"GRAM Suite 2.0/simulation/GRAM/build_gram.sh" "/absolute/path/to/GRAM Suite 2.0"
+```
+
+The external installation must provide `Build/setup_cspice.sh`, a GNU Make
+`shared` target and the required CSPICE archive. Those build files are not in this
+public checkout; check them in the supplied installation. See the
+[build and smoke-test guide](../simulation/GRAM/README.md) for other platforms.
 
 Expected output:
 - macOS: `Build/lib/libGRAM.dylib`
@@ -22,19 +28,24 @@ Expected output:
 
 ## 2. Use from Julia
 
-From the repository root:
+Start Julia from the GRAMSuite.jl repository root after the build succeeds.
+Set `gram_root` to the external installation, including its selected SPICE and
+Mars data. These low-level calls use **kilometres and degrees**; unlike the
+package's SI query API, they pass the native coordinate convention explicitly.
 
 ```julia
-include("Julia/GRAM.jl")
+gram_root = "/absolute/path/to/GRAM Suite 2.0"
+include("GRAM Suite 2.0/Julia/GRAM.jl")
 using .GRAM
 
 libext = Sys.iswindows() ? "dll" : (Sys.isapple() ? "dylib" : "so")
-set_library!(joinpath("Build", "lib", "libGRAM.$libext"))
-initialize!("SPICE")
+set_library!(joinpath(gram_root, "Build", "lib", "libGRAM.$libext"))
+initialize!(joinpath(gram_root, "SPICE"))
 
-atmos = create_atmosphere(BODY_MARS; data_path=joinpath("Mars", "data"))
+atmos = create_atmosphere(BODY_MARS; data_path=joinpath(gram_root, "Mars", "data"))
 set_start_time!(atmos; year=2020, month=3, day=15, hour=0, minute=0, seconds=0.0, scale=1, frame=1)
-set_position!(atmos; height=50.0, latitude=22.0, longitude=48.0, elapsed_time=100.0)
+set_position!(atmos; height=50.0, latitude=22.0, longitude=48.0, elapsed_time=100.0,
+              is_planetocentric=true)
 
 err = update!(atmos)
 if err != 0

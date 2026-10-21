@@ -1,5 +1,19 @@
 # GRAM Suite 2.0.0
 
+## Public checkout and external distribution
+
+This directory in the public GRAMSuite.jl repository contains Julia bindings,
+SPICE files and integration scripts. It is not the complete NASA native source
+distribution: `Build`, `common`, planetary input data and the manuals listed
+below must be supplied separately. See the [package setup guide](../README.md#acquiring-gram)
+and [Julia binding guide](Julia/README.md).
+
+The following layout and manual references describe the external GRAM Suite
+distribution. They are retained as upstream context, not as an inventory of this
+public checkout.
+
+## Distribution notes
+
 Please read "CRITICAL INFORMATION AND ERRATA.pdf" located in the GRAM\Documentation folder.
 
 If you'd like to run one of the pre-built GRAM programs, please refer to the User Guides found in GRAM\Documentation folder.
