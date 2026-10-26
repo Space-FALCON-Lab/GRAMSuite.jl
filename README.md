@@ -157,9 +157,8 @@ script searches known relative locations for a tree containing `Build/` and
 "GRAM Suite 2.0\simulation\GRAM\build_gram.cmd" "C:\path\to\GRAM Suite 2.0"
 ```
 
-Pass an explicit root only if this folder has been moved outside a GRAM Suite
-tree — quote it, since the default folder name contains a space:
-`./build_gram.sh "/absolute/path/to/GRAM Suite 2.0"`.
+Omit the path only when these scripts already sit inside a complete GRAM Suite
+tree. Quote it, since the default folder name contains a space.
 
 The script, in order:
 
@@ -190,7 +189,7 @@ exist on their machine.
 The wrapper is the supported path. If you need to drive `make` yourself:
 
 ```bash
-cd "GRAM Suite 2.0/Build"
+cd "/absolute/path/to/GRAM Suite 2.0/Build"
 ./setup_cspice.sh
 make clean && make shared -j        # gmake on macOS, mingw32-make on Windows
 ```
@@ -210,7 +209,7 @@ run.
 Add `--clean` (`-Clean` in PowerShell) to force a full rebuild:
 
 ```bash
-"GRAM Suite 2.0/simulation/GRAM/build_gram.sh" --clean
+"GRAM Suite 2.0/simulation/GRAM/build_gram.sh" --clean "/absolute/path/to/GRAM Suite 2.0"
 ```
 
 You usually do not need it. The build manifest records the host tag and root
@@ -236,7 +235,7 @@ can otherwise be mistaken for a native one.
   override:
 
   ```bash
-  cd "GRAM Suite 2.0/Build"
+  cd "/absolute/path/to/GRAM Suite 2.0/Build"
   make shared -j SPICE_LIB=/absolute/path/to/cspice.a
   ```
 
