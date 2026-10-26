@@ -14,9 +14,18 @@ This folder is a portable bridge for using GRAM from a simulation project.
 
 ## Quick start
 
+First obtain the external native installation described in the
+[package setup guide](../../../README.md#acquiring-gram). The public checkout
+does not contain its `Build` system, CSPICE archives or planetary input data.
+The supplied installation must have the expected shared-library build interface
+and a compatible `Julia/GRAM.jl` for the smoke test.
+
+Run the commands below **from this directory**,
+`GRAM Suite 2.0/simulation/GRAM`. Quote paths containing spaces.
+
 macOS/Linux/MSYS shell:
 
-1. `./build_gram.sh /absolute/path/to/GRAM Suite 2.0`
+1. `./build_gram.sh "/absolute/path/to/GRAM Suite 2.0"`
 2. `./run_julia_smoke_test.sh`
 
 Windows PowerShell:
@@ -29,12 +38,18 @@ Windows CMD:
 1. `build_gram.cmd "C:\path\to\GRAM Suite 2.0"`
 2. `run_julia_smoke_test.cmd`
 
+A successful smoke test prints `GRAM smoke test passed` and atmospheric values.
+It checks the native interface with the selected local files; it does not validate
+a mission atmosphere. Build commands generate environment files in this directory.
+Keep those machine-specific files untracked.
+
 ## Notes
 
 - macOS uses `gmake` (GNU make). Linux uses `make`.
 - Windows uses `mingw32-make` (or `make`) from MSYS2/MinGW.
 - Scripts call `Build/setup_cspice.sh` automatically.
-- On Windows, bundled `common/cspice/lib/cspice_mingw64.a` is used.
+- On Windows, the external installation is expected to provide
+  `common/cspice/lib/cspice_mingw64.a`.
 
 ## Offline atmosphere generation
 
