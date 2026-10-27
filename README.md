@@ -372,6 +372,13 @@ from the default atmosphere and includes no data. See the
 [endpoint guide](docs/mars_wind_endpoints.md) for its local domain, provenance
 contract and separately supplied sound-speed limit.
 
+## Contributors
+
+- [Giusy Falcone](https://github.com/gfalcon2)
+- [Evan Yu](https://github.com/EvanY14)
+
+These credits concern the Julia wrapper and repository integration. NASA GRAM and the supplied third-party assets retain their own authorship and license terms.
+
 ## License
 
 The wrapper code is released under the MIT License (see [LICENSE](LICENSE)).
